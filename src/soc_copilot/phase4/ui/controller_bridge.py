@@ -3,6 +3,7 @@
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
+import threading
 from ..controller import AppController, AnalysisResult
 
 
@@ -12,6 +13,8 @@ class ControllerBridge:
     def __init__(self, controller: AppController):
         self._controller = controller
         self._permission_status = None
+        self._sources_added = 0
+        self._process_lock = threading.Lock()  # Serialize pipeline access
         self._check_permissions()
     
     def _check_permissions(self):
@@ -92,7 +95,7 @@ class ControllerBridge:
         return self._controller.result_store.count()
     
     def add_file_source(self, filepath: str) -> bool:
-        """Add a file for analysis. Process immediately."""
+        """Add a file for analysis. Process immediately (thread-safe)."""
         try:
             path = Path(filepath)
             if not path.exists():
@@ -101,7 +104,10 @@ class ControllerBridge:
             # Read and parse file content
             records = self._parse_file(path)
             if records:
-                self._controller.process_batch(records)
+                with self._process_lock:
+                    self._controller.process_batch(records)
+                    self._sources_added += 1
+                    self._controller._sources_count = self._sources_added
             return True
         except Exception:
             return False

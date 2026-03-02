@@ -10,11 +10,59 @@ Zone F: Footer Status
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
-    QPushButton, QFileDialog, QTableWidget, QTableWidgetItem
+    QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
+    QProgressBar
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from datetime import datetime
+
+from .state_constants import (
+    get_pipeline_state, get_ingestion_state, get_governance_state,
+    format_ingestion_label,
+    PIPELINE_STATES, INGESTION_STATES, GOVERNANCE_STATES,
+    PipelineState, IngestionState, GovernanceState
+)
+
+
+class FileProcessingWorker(QThread):
+    """Worker thread for processing uploaded log files without blocking the UI."""
+
+    # Signals to communicate with the main thread
+    progress = pyqtSignal(int, int)       # (current_file_index, total_files)
+    file_done = pyqtSignal(str, bool)     # (filepath, success)
+    all_done = pyqtSignal(int, int)       # (success_count, total_count)
+    error = pyqtSignal(str)               # error message
+
+    def __init__(self, bridge, file_paths):
+        super().__init__()
+        self.bridge = bridge
+        self.file_paths = file_paths
+        self._cancelled = False
+
+    def cancel(self):
+        """Request cancellation of processing."""
+        self._cancelled = True
+
+    def run(self):
+        """Process files in the background thread."""
+        success_count = 0
+        total = len(self.file_paths)
+
+        for i, file_path in enumerate(self.file_paths):
+            if self._cancelled:
+                break
+            try:
+                self.bridge.add_file_source(file_path)
+                success_count += 1
+                self.file_done.emit(file_path, True)
+            except Exception as e:
+                self.file_done.emit(file_path, False)
+                self.error.emit(f"Failed to process {file_path}: {str(e)}")
+
+            self.progress.emit(i + 1, total)
+
+        self.all_done.emit(success_count, total)
 
 
 class ThreatBanner(QFrame):
@@ -56,10 +104,10 @@ class ThreatBanner(QFrame):
         """Update threat level"""
         levels = {
             "loading": ("#16213e", "#888888", "⏳", "LOADING"),
-            "critical": ("#4a0000", "#ff4444", "🚨", "CRITICAL THREAT"),
-            "high": ("#4a2000", "#ff8800", "⚠️", "HIGH ALERT"),
+            "critical": ("#4a0000", "#ff4444", "🚨", "CRITICAL"),
+            "high": ("#4a2000", "#ff8800", "⚠️", "HIGH"),
             "elevated": ("#4a4000", "#ffaa00", "⚡", "ELEVATED"),
-            "normal": ("#004a2a", "#4CAF50", "✅", "NORMAL")
+            "normal": ("#004a2a", "#4CAF50", "●", "NORMAL")
         }
         
         bg, fg, icon, text = levels.get(level, levels["normal"])
@@ -83,7 +131,7 @@ class ThreatBanner(QFrame):
         elif high > 0:
             self.detail_label.setText(f"{high} high-priority alerts detected")
         else:
-            self.detail_label.setText("No critical threats detected")
+            self.detail_label.setText("Routine activity only")
 
 
 class SystemStatusStrip(QFrame):
@@ -130,33 +178,25 @@ class SystemStatusStrip(QFrame):
         return sep
     
     def update_status(self, pipeline: bool, sources: int, running: bool, killswitch: bool):
-        """Update all status indicators"""
+        """Update all status indicators using centralized state mappings"""
         # Pipeline
-        if pipeline:
-            self.pipeline_label.setText("Pipeline: ● Active")
-            self.pipeline_label.setStyleSheet("color: #4CAF50;")
-        else:
-            self.pipeline_label.setText("Pipeline: ○ Inactive")
-            self.pipeline_label.setStyleSheet("color: #ff8800;")
+        pipeline_state = get_pipeline_state(pipeline)
+        pipeline_cfg = PIPELINE_STATES[pipeline_state]
+        self.pipeline_label.setText(f"Pipeline: {pipeline_cfg.icon} {pipeline_cfg.label}")
+        self.pipeline_label.setStyleSheet(f"color: {pipeline_cfg.color};")
         
         # Ingestion
-        if running and sources > 0:
-            self.ingestion_label.setText(f"Ingestion: ● Active ({sources})")
-            self.ingestion_label.setStyleSheet("color: #2196F3;")
-        elif sources > 0:
-            self.ingestion_label.setText(f"Ingestion: ○ Idle ({sources})")
-            self.ingestion_label.setStyleSheet("color: #888888;")
-        else:
-            self.ingestion_label.setText("Ingestion: Not Started")
-            self.ingestion_label.setStyleSheet("color: #888888;")
+        ingestion_state = get_ingestion_state(running, sources, killswitch)
+        ingestion_cfg = INGESTION_STATES[ingestion_state]
+        ingestion_label = format_ingestion_label(ingestion_state, sources)
+        self.ingestion_label.setText(f"Ingestion: {ingestion_cfg.icon} {ingestion_label}")
+        self.ingestion_label.setStyleSheet(f"color: {ingestion_cfg.color};")
         
         # Governance
-        if killswitch:
-            self.governance_label.setText("Governance: 🛑 KILL SWITCH")
-            self.governance_label.setStyleSheet("color: #ff4444;")
-        else:
-            self.governance_label.setText("Governance: ✓ OK")
-            self.governance_label.setStyleSheet("color: #4CAF50;")
+        governance_state = get_governance_state(killswitch, True)
+        governance_cfg = GOVERNANCE_STATES[governance_state]
+        self.governance_label.setText(f"Governance: {governance_cfg.icon} {governance_cfg.label}")
+        self.governance_label.setStyleSheet(f"color: {governance_cfg.color};")
         
         # Timestamp
         self.timestamp_label.setText(datetime.now().strftime("%H:%M:%S"))
@@ -347,9 +387,9 @@ class RecentAlertsTimeline(QFrame):
         layout.addWidget(self.table)
         
         # Empty state
-        self.empty_label = QLabel("No recent alerts")
+        self.empty_label = QLabel("No alerts • Upload logs to begin analysis")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #888888; padding: 40px;")
+        self.empty_label.setStyleSheet("color: #666666; padding: 40px;")
         self.empty_label.hide()
         layout.addWidget(self.empty_label)
         
@@ -426,6 +466,7 @@ class Dashboard(QWidget):
         super().__init__()
         self.bridge = bridge
         self._alerts_cache = []
+        self._worker = None  # Background file processing thread
         self._init_ui()
         
         # Unified polling (3 seconds)
@@ -463,6 +504,24 @@ class Dashboard(QWidget):
         self.alerts_timeline = RecentAlertsTimeline()
         self.alerts_timeline.alert_clicked.connect(self.alert_selected.emit)
         layout.addWidget(self.alerts_timeline, 1)
+        
+        # Progress bar for file uploads (hidden by default)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                border-radius: 3px;
+                background-color: #1a1a2e;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #00d4ff, stop:1 #00ff88);
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
         
         self.setLayout(layout)
     
@@ -548,7 +607,11 @@ class Dashboard(QWidget):
             self.navigate_to_alerts_filtered.emit(priority)
     
     def _upload_logs(self):
-        """Upload log files"""
+        """Upload and analyze log files asynchronously via worker thread."""
+        # Prevent overlapping uploads
+        if self._worker is not None and self._worker.isRunning():
+            return
+        
         files, _ = QFileDialog.getOpenFileNames(
             self, "Select Log Files", "",
             "Log Files (*.json *.jsonl *.csv *.log);;All (*.*)"
@@ -557,20 +620,43 @@ class Dashboard(QWidget):
         if not files:
             return
         
+        # Disable UI controls while processing
         self.actions_bar.upload_btn.setEnabled(False)
         self.actions_bar.upload_btn.setText("⏳ Processing...")
+        self.actions_bar.refresh_btn.setEnabled(False)
         
-        for file_path in files:
-            try:
-                self.bridge.add_file_source(file_path)
-            except Exception:
-                pass
+        # Show progress bar
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, len(files))
+        self.progress_bar.setValue(0)
         
-        self.bridge.start_ingestion()
-        
-        QTimer.singleShot(1000, self._reset_upload_btn)
-        QTimer.singleShot(500, self.refresh)
+        # Create and start worker thread
+        self._worker = FileProcessingWorker(self.bridge, files)
+        self._worker.progress.connect(self._on_worker_progress)
+        self._worker.all_done.connect(self._on_worker_done)
+        self._worker.finished.connect(self._on_worker_finished)
+        self._worker.start()
     
-    def _reset_upload_btn(self):
+    def _on_worker_progress(self, current, total):
+        """Update progress bar from worker thread signal."""
+        self.progress_bar.setValue(current)
+    
+    def _on_worker_done(self, success_count, total_count):
+        """Handle worker completion — refresh dashboard with new results."""
+        self.bridge.start_ingestion()
+        self.refresh()
+        self.status_strip.timestamp_label.setText(
+            f"Processed {success_count}/{total_count} files at {datetime.now().strftime('%H:%M:%S')}"
+        )
+    
+    def _on_worker_finished(self):
+        """Clean up worker reference, re-enable UI, and hide progress bar."""
         self.actions_bar.upload_btn.setEnabled(True)
         self.actions_bar.upload_btn.setText("📁 Upload Logs")
+        self.actions_bar.refresh_btn.setEnabled(True)
+        QTimer.singleShot(1000, self._hide_progress)
+        self._worker = None
+    
+    def _hide_progress(self):
+        """Hide the progress bar after a short delay."""
+        self.progress_bar.setVisible(False)

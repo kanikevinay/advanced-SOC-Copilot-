@@ -17,6 +17,11 @@ from PyQt6.QtGui import QFont
 
 from ..config import ConfigManager
 from ..kill_switch import KillSwitch
+from .state_constants import (
+    get_ingestion_state, get_governance_state,
+    INGESTION_STATES, GOVERNANCE_STATES,
+    GovernanceState
+)
 
 
 class ToggleSwitch(QFrame):
@@ -322,13 +327,15 @@ class ConfigPanel(QWidget):
         except Exception:
             self.perm_indicator.update_status("Unknown", "#888888")
         
-        # Kill Switch
+        # Kill Switch (using centralized governance state for color consistency)
         if self.kill_switch.is_active():
-            self.kill_indicator.update_status("Active", "#f44336")
+            gov_cfg = GOVERNANCE_STATES[GovernanceState.HALTED]
+            self.kill_indicator.update_status("Active", gov_cfg.color)
         else:
-            self.kill_indicator.update_status("Inactive", "#4CAF50")
+            gov_cfg = GOVERNANCE_STATES[GovernanceState.OK]
+            self.kill_indicator.update_status("Inactive", gov_cfg.color)
         
-        # Ingestion Status
+        # Ingestion Status (using centralized ingestion states)
         if self.bridge:
             try:
                 stats = self.bridge.get_stats()
@@ -336,18 +343,14 @@ class ConfigPanel(QWidget):
                 shutdown = stats.get('shutdown_flag', False)
                 sources = stats.get('sources_count', 0)
                 
-                if shutdown:
-                    self.ingestion_indicator.update_status("Stopped", "#FFC107")
-                elif running and sources > 0:
-                    self.ingestion_indicator.update_status("Active", "#4CAF50")
-                elif sources > 0:
-                    self.ingestion_indicator.update_status("Configured", "#2196F3")
-                else:
-                    self.ingestion_indicator.update_status("Not Started", "#666666")
+                ingestion_state = get_ingestion_state(running, sources, shutdown)
+                ingestion_cfg = INGESTION_STATES[ingestion_state]
+                self.ingestion_indicator.update_status(ingestion_cfg.label, ingestion_cfg.color)
             except Exception:
                 self.ingestion_indicator.update_status("Unknown", "#888888")
         else:
-            self.ingestion_indicator.update_status("Not Started", "#666666")
+            not_started_cfg = INGESTION_STATES["not_started"]
+            self.ingestion_indicator.update_status(not_started_cfg.label, not_started_cfg.color)
     
     def refresh(self):
         """Public method to refresh status (called by timer)"""

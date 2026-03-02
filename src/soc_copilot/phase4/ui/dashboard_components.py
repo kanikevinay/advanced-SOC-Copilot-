@@ -16,7 +16,7 @@ class ThreatLevelBanner(QFrame):
         "critical": {"bg": "#1a0000", "fg": "#ff4444", "border": "#ff4444", "icon": "⚫", "label": "CRITICAL"},
         "high": {"bg": "#2d1a00", "fg": "#ff8800", "border": "#ff8800", "icon": "🔴", "label": "HIGH"},
         "elevated": {"bg": "#2d2d00", "fg": "#ffaa00", "border": "#ffaa00", "icon": "🟡", "label": "ELEVATED"},
-        "clear": {"bg": "#0d2818", "fg": "#4CAF50", "border": "#4CAF50", "icon": "🟢", "label": "CLEAR"}
+        "clear": {"bg": "#0d2818", "fg": "#4CAF50", "border": "#4CAF50", "icon": "🟢", "label": "NORMAL"}
     }
     
     view_alerts_clicked = pyqtSignal()
@@ -138,7 +138,7 @@ class ThreatLevelBanner(QFrame):
             action_text = f"{medium} Medium Priority Alert{'s' if medium > 1 else ''} Detected"
         else:
             level = "clear"
-            action_text = "All systems nominal • No threats detected"
+            action_text = "No actionable threats • Routine activity only"
         
         config = self.THREAT_LEVELS[level]
         self._current_level = level
@@ -328,20 +328,20 @@ class RecentAlertsTimeline(QFrame):
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(15)
         
-        icon = QLabel("✅")
+        icon = QLabel("📋")
         icon.setFont(QFont("Segoe UI Emoji", 32))
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(icon)
         
-        title = QLabel("All Clear")
+        title = QLabel("No Alerts")
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        title.setStyleSheet("color: #4CAF50;")
+        title.setStyleSheet("color: #888888;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(title)
         
-        desc = QLabel("No threats detected in analyzed logs.\nAlerts will appear here when detected.")
+        desc = QLabel("Analyzed logs show routine activity.\nUpload logs or wait for new data.")
         desc.setFont(QFont("Segoe UI", 11))
-        desc.setStyleSheet("color: #888888;")
+        desc.setStyleSheet("color: #666666;")
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(desc)
         
@@ -356,13 +356,16 @@ class RecentAlertsTimeline(QFrame):
             item.deleteLater()
         self._alert_items.clear()
     
-    def update_alerts(self, alerts_data: list):
+    def update_alerts(self, alerts_data: list, results_count: int = 0):
         """Update timeline with new alerts"""
         self._clear_alerts()
         
         if not alerts_data:
             self._show_empty_state()
-            self.count_label.setText("0 alerts")
+            if results_count > 0:
+                self.count_label.setText(f"0 alerts • {results_count} batch{'es' if results_count != 1 else ''} analyzed")
+            else:
+                self.count_label.setText("0 alerts")
             return
         
         self.count_label.setText(f"{len(alerts_data)} alert{'s' if len(alerts_data) != 1 else ''}")
