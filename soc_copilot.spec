@@ -70,6 +70,12 @@ a = Analysis(
         'soc_copilot.phase4.ui',
         'soc_copilot.phase4.controller',
         'soc_copilot.phase4.ingestion',
+
+        # Security
+        'soc_copilot.security',
+        'soc_copilot.security.input_validator',
+        'soc_copilot.security.model_integrity',
+        'soc_copilot.security.permissions',
     ],
     excludes=[
         'pytest',

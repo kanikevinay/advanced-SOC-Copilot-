@@ -13,12 +13,12 @@ from PyQt6.QtGui import QPolygonF
 class AboutDialog(QDialog):
     """About dialog showing application information"""
     
-    VERSION = "0.1.0"
+    VERSION = "1.0.0-beta.1"
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("About SOC Copilot")
-        self.setFixedSize(450, 350)
+        self.setFixedSize(450, 420)
         self.setModal(True)
         self._init_ui()
         
@@ -40,12 +40,26 @@ class AboutDialog(QDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
-        # Version
+        # Version with beta badge
         version = QLabel(f"Version {self.VERSION}")
         version.setFont(QFont("Segoe UI", 12))
         version.setStyleSheet("color: #888888;")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
+        
+        # Beta disclaimer
+        beta_label = QLabel(
+            "⚠ Beta Release — This is a pre-release version.\n"
+            "Features may change. Report issues on GitHub."
+        )
+        beta_label.setFont(QFont("Segoe UI", 9))
+        beta_label.setStyleSheet(
+            "color: #ffa000; background-color: #2a2000; "
+            "border-radius: 4px; padding: 6px;"
+        )
+        beta_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        beta_label.setWordWrap(True)
+        layout.addWidget(beta_label)
         
         # Description
         desc = QLabel(

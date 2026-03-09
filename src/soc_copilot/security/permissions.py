@@ -132,17 +132,75 @@ def _set_permissions(path: Path, mode: int) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    if platform.system() == "Windows":
+        return _set_windows_acl(path, mode)
+    
     try:
         os.chmod(path, mode)
         return True
-    except (OSError, NotImplementedError) as e:
-        # Windows may not support chmod fully
-        if platform.system() == "Windows":
-            # Log warning but don't fail on Windows
-            # This is best-effort on Windows
-            return True
-        else:
-            # On Unix-like systems, this is a real error
-            return False
+    except (OSError, NotImplementedError):
+        return False
     except Exception:
         return False
+
+
+def _set_windows_acl(path: Path, mode: int) -> bool:
+    """Set file permissions on Windows using icacls.
+    
+    Maps Unix-style modes to Windows ACL operations:
+    - 0o600 (owner-only): Remove inherited permissions, grant current user full control
+    - 0o640 (owner + group read): Grant current user full, authenticated users read
+    - 0o700 (directory, owner-only): Grant current user full control
+    
+    Args:
+        path: Path to set permissions on
+        mode: Unix-style permission mode (used to determine ACL policy)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    import subprocess
+    
+    try:
+        username = os.environ.get("USERNAME", "")
+        if not username:
+            return True  # Can't determine user, skip silently
+        
+        path_str = str(path)
+        
+        if mode in (0o600, 0o700):
+            # Restrictive: only current user gets access
+            # Reset permissions and grant only current user
+            cmds = [
+                ["icacls", path_str, "/inheritance:r"],
+                ["icacls", path_str, "/grant:r", f"{username}:(F)"],
+            ]
+        elif mode == 0o640:
+            # Less restrictive: owner full, others read
+            cmds = [
+                ["icacls", path_str, "/inheritance:r"],
+                ["icacls", path_str, "/grant:r", f"{username}:(F)"],
+                ["icacls", path_str, "/grant:r", "Users:(R)"],
+            ]
+        else:
+            return True  # Unknown mode, skip
+        
+        for cmd in cmds:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode != 0:
+                return False
+        
+        return True
+        
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        # icacls not available or failed — best effort
+        return True
+    except Exception:
+        return True  # Don't fail the application for permission issues
+

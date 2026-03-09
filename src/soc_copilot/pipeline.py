@@ -125,7 +125,28 @@ class SOCCopilot:
     # ------------------------------------------------------------------
 
     def load(self) -> None:
-        """Load ML models and pipelines."""
+        """Load ML models and pipelines.
+        
+        Verifies model file integrity before loading if a hash manifest
+        is available. Logs a warning if no manifest exists (first-run).
+        """
+        # Verify model integrity before loading
+        try:
+            from soc_copilot.security.model_integrity import verify_models
+            integrity = verify_models(self.config.models_dir)
+            if not integrity.is_valid and integrity.error and "skipped" not in integrity.error:
+                logger.error(
+                    "model_integrity_failed",
+                    error=integrity.error,
+                    failed=integrity.failed_files,
+                    missing=integrity.missing_files,
+                )
+                raise RuntimeError(
+                    f"Model integrity check failed: {integrity.error}"
+                )
+        except ImportError:
+            pass  # Security module not available (edge case)
+        
         self._analysis.load()
         self._feature_order = self._analysis.feature_order
         self._loaded = True

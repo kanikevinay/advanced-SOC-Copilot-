@@ -124,6 +124,19 @@ class Sidebar(QFrame):
         title.setStyleSheet("color: #00d4ff; padding: 10px 0;")
         layout.addWidget(title)
         
+        # Beta badge
+        beta_badge = QLabel("BETA")
+        beta_badge.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        beta_badge.setStyleSheet("""
+            color: #1e1e1e;
+            background-color: #ffa000;
+            border-radius: 4px;
+            padding: 2px 8px;
+        """)
+        beta_badge.setFixedWidth(50)
+        beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(beta_badge)
+        
         # Simple status frame (replacing the counter cards)
         status_frame = QFrame()
         status_frame.setStyleSheet("""
@@ -177,7 +190,7 @@ class Sidebar(QFrame):
         layout.addStretch()
         
         # Version info
-        version_label = QLabel("v0.3.0")
+        version_label = QLabel("v1.0.0-beta.1")
         version_label.setStyleSheet("color: #444444; font-size: 10px;")
         layout.addWidget(version_label)
         
@@ -247,7 +260,7 @@ class Sidebar(QFrame):
 class MainWindow(QMainWindow):
     """Optimized SOC Copilot main window with sidebar navigation"""
     
-    VERSION = "0.3.0"
+    VERSION = "1.0.0-beta.1"
     
     def __init__(self, controller):
         super().__init__()
@@ -257,7 +270,7 @@ class MainWindow(QMainWindow):
         self._set_window_icon()
     
     def _init_ui(self):
-        self.setWindowTitle("SOC Copilot - Real-Time Security Analysis")
+        self.setWindowTitle("SOC Copilot [BETA] - Real-Time Security Analysis")
         self.setGeometry(50, 50, 1500, 950)
         
         # Apply modern dark theme

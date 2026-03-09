@@ -10,6 +10,10 @@ from soc_copilot.pipeline import create_soc_copilot
 from .schemas import AnalysisResult, AlertSummary, PipelineStats
 from .result_store import ResultStore
 
+from soc_copilot.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class AppController:
     """Main application controller for real-time analysis"""
@@ -19,14 +23,31 @@ class AppController:
         self.killswitch_check = killswitch_check
         self.result_store = ResultStore(max_results=1000)
         self._pipeline = None
+        self._text_log_classifier = None
         self._running = False
         self._sources_count = 0
         self._dropped_count = 0
         self._batches_processed = 0
     
     def initialize(self):
-        """Initialize analysis pipeline"""
+        """Initialize analysis pipelines (network-flow ML + text log ML)"""
         self._pipeline = create_soc_copilot(self.models_dir)
+        
+        # Load text log classifier (optional — falls back to rules)
+        text_log_model_path = Path(self.models_dir) / "text_log_rf_v1.joblib"
+        try:
+            from models.text_log_classifier.text_log_classifier import TextLogClassifier
+            clf = TextLogClassifier()
+            clf.load(text_log_model_path)
+            self._text_log_classifier = clf
+            logger.info("text_log_classifier_loaded", path=str(text_log_model_path))
+        except (FileNotFoundError, ImportError) as e:
+            logger.warning(
+                "text_log_classifier_not_available",
+                error=str(e),
+                fallback="rule-based detection",
+            )
+            self._text_log_classifier = None
     
     def process_batch(self, records: List[dict]) -> Optional[AnalysisResult]:
         """Process batch of raw log records"""
@@ -45,8 +66,8 @@ class AppController:
         # Measure processing time
         start_time = time.time()
         
-        # Run rule-based detection on raw lines first
-        rule_alerts = self._rule_based_detect(raw_lines)
+        # Run text log ML detection (falls back to rules if model unavailable)
+        text_log_alerts = self._text_log_ml_detect(raw_lines)
         
         # Analyze batch (using existing ML pipeline)
         try:
@@ -65,14 +86,14 @@ class AppController:
         # Convert ML alerts to view models
         alert_summaries = self._convert_alerts(alerts)
         
-        # Merge rule-based alerts with ML alerts
-        alert_summaries.extend(rule_alerts)
+        # Merge text log alerts with network-flow ML alerts
+        alert_summaries.extend(text_log_alerts)
         
         pipeline_stats = self._convert_stats(stats, processing_time)
-        # Update stats with rule-based alerts
-        pipeline_stats.alerts_generated += len(rule_alerts)
-        for ra in rule_alerts:
-            cls = ra.classification
+        # Update stats with text log alerts
+        pipeline_stats.alerts_generated += len(text_log_alerts)
+        for ta in text_log_alerts:
+            cls = ta.classification
             pipeline_stats.classification_distribution[cls] = (
                 pipeline_stats.classification_distribution.get(cls, 0) + 1
             )
@@ -90,6 +111,130 @@ class AppController:
         self.result_store.add(result)
         
         return result
+    
+    # ------------------------------------------------------------------
+    # Text Log ML Detection
+    # ------------------------------------------------------------------
+    
+    # Priority and action mappings for text log classifications
+    _CLASSIFICATION_CONFIG = {
+        "BruteForce": {
+            "priority_high": "P1-Critical",
+            "priority_low": "P2-High",
+            "prefix": "ML-BF",
+            "action": "Block source IP and investigate compromised credentials",
+        },
+        "Malware": {
+            "priority_high": "P1-Critical",
+            "priority_low": "P1-Critical",
+            "prefix": "ML-MAL",
+            "action": "Isolate host immediately, run malware scan, check for lateral movement",
+        },
+        "Exfiltration": {
+            "priority_high": "P1-Critical",
+            "priority_low": "P2-High",
+            "prefix": "ML-EXFIL",
+            "action": "Block outbound connection, investigate data contents and authorization",
+        },
+        "Suspicious": {
+            "priority_high": "P2-High",
+            "priority_low": "P3-Medium",
+            "prefix": "ML-SUSP",
+            "action": "Investigate the activity and correlate with other events",
+        },
+    }
+    
+    def _text_log_ml_detect(self, lines: List[str]) -> List[AlertSummary]:
+        """ML-based threat detection for text log lines.
+        
+        Uses the text log Random Forest classifier. Falls back to
+        rule-based detection if the model is not loaded.
+        
+        Args:
+            lines: Raw log lines
+            
+        Returns:
+            List of AlertSummary objects for detected threats
+        """
+        # Fall back to rules if ML model not available
+        if self._text_log_classifier is None:
+            return self._rule_based_detect(lines)
+        
+        alerts: List[AlertSummary] = []
+        
+        for line in lines:
+            parsed = self._parse_raw_log(line)
+            
+            try:
+                classification, confidence, class_probas = (
+                    self._text_log_classifier.classify(parsed)
+                )
+            except Exception as e:
+                logger.warning("text_log_classify_failed", line=line[:80], error=str(e))
+                continue
+            
+            # Skip benign events
+            if classification == "Benign":
+                continue
+            
+            # Only alert if confidence is above threshold
+            if confidence < 0.70:
+                continue
+            
+            config = self._CLASSIFICATION_CONFIG.get(classification, {})
+            if not config:
+                continue
+            
+            # Determine priority based on confidence
+            if confidence >= 0.85:
+                priority = config["priority_high"]
+                risk = min(confidence, 0.95)
+            else:
+                priority = config["priority_low"]
+                risk = confidence
+            
+            # Build human-readable reasoning
+            src_ip = parsed.get("src_ip", "")
+            dst_ip = parsed.get("dst_ip", "")
+            user = parsed.get("user", "")
+            event_type = parsed.get("event_type", "")
+            
+            reasoning_parts = [
+                f"ML classification: {classification} ({confidence:.0%} confidence).",
+            ]
+            if event_type:
+                reasoning_parts.append(f"Event: {event_type}.")
+            if user:
+                reasoning_parts.append(f"User: {user}.")
+            if src_ip and self._is_external_ip(src_ip):
+                reasoning_parts.append(f"External source IP: {src_ip}.")
+            if dst_ip and self._is_external_ip(dst_ip):
+                reasoning_parts.append(f"External destination IP: {dst_ip}.")
+            if parsed.get("login_attempts", 0) > 0:
+                reasoning_parts.append(f"Failed login attempts: {parsed['login_attempts']}.")
+            if parsed.get("data_size_mb", 0) > 0:
+                reasoning_parts.append(f"Data transfer: {parsed['data_size_mb']}MB.")
+            
+            # Top class probabilities for context
+            top_3 = sorted(class_probas.items(), key=lambda x: -x[1])[:3]
+            prob_str = ", ".join(f"{c}: {p:.0%}" for c, p in top_3)
+            reasoning_parts.append(f"Class probabilities: [{prob_str}]")
+            
+            alerts.append(AlertSummary(
+                alert_id=f"{config['prefix']}-{uuid.uuid4().hex[:8]}",
+                priority=priority,
+                classification=classification,
+                confidence=confidence,
+                anomaly_score=risk,
+                risk_score=risk,
+                source_ip=src_ip or None,
+                destination_ip=dst_ip or None,
+                timestamp=datetime.now(),
+                reasoning=" ".join(reasoning_parts),
+                suggested_action=config["action"],
+            ))
+        
+        return alerts
     
     @staticmethod
     def _is_external_ip(ip: str) -> bool:

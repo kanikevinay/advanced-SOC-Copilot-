@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Optional, Callable
 from threading import Thread, Event
 
+from soc_copilot.security.input_validator import validate_path, validate_log_file
+
+
 
 class FileTailer:
     """Tail a log file and emit new lines with robust error handling"""
@@ -172,6 +175,11 @@ class DirectoryWatcher:
         """Start watching directory"""
         if self._thread and self._thread.is_alive():
             return
+        
+        # Validate directory path before watching
+        result = validate_path(str(self.directory))
+        if not result.is_valid:
+            return  # Silently skip invalid directories
         
         self._stop_event.clear()
         self._error_count = 0

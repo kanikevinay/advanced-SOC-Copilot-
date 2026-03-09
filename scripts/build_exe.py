@@ -197,7 +197,7 @@ def create_version_file(project_root: Path):
     print("\nCreating version file...")
     
     version_content = """SOC Copilot Desktop Application
-Version: 0.1.0
+Version: 1.0.0-beta.1
 Build Date: {date}
 Platform: Windows x64
 
@@ -206,6 +206,9 @@ Features:
 - Real-time Log Ingestion
 - Offline Operation
 - Governance Controls
+- Model Integrity Verification
+- Input Path Validation
+- Windows ACL Permissions
 
 © 2026 SOC Copilot Team
 MIT License
@@ -220,6 +223,55 @@ MIT License
     if dist_dir.exists():
         version_file.write_text(content)
         print(f"  [OK] Created {version_file.name}")
+
+
+def generate_model_hashes(project_root: Path):
+    """Generate SHA-256 integrity hashes for ML model files"""
+    print("\nGenerating model integrity hashes...")
+    
+    models_dir = project_root / "data" / "models"
+    if not models_dir.exists():
+        print("  [SKIP] Models directory not found, skipping hash generation")
+        return
+    
+    try:
+        # Add src to path for import
+        sys.path.insert(0, str(project_root / "src"))
+        from soc_copilot.security.model_integrity import save_manifest
+        
+        manifest_path = save_manifest(models_dir)
+        print(f"  [OK] Model integrity manifest saved: {manifest_path.name}")
+    except ImportError:
+        print("  [SKIP] Security module not available, using fallback hash generation")
+        _fallback_generate_hashes(models_dir)
+    except Exception as e:
+        print(f"  [WARNING] Hash generation failed: {e}")
+
+
+def _fallback_generate_hashes(models_dir: Path):
+    """Fallback hash generation without security module"""
+    import hashlib
+    import json
+    
+    manifest = {"algorithm": "sha256", "files": {}}
+    
+    for filepath in models_dir.iterdir():
+        if filepath.suffix in (".joblib", ".json") and filepath.name != "model_hashes.json":
+            hasher = hashlib.sha256()
+            with open(filepath, "rb") as f:
+                while True:
+                    data = f.read(65536)
+                    if not data:
+                        break
+                    hasher.update(data)
+            manifest["files"][filepath.name] = hasher.hexdigest()
+            print(f"  [OK] Hashed: {filepath.name}")
+    
+    manifest_path = models_dir / "model_hashes.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    
+    print(f"  [OK] Manifest saved: {manifest_path.name}")
 
 
 def main():
@@ -244,6 +296,9 @@ def main():
     # Clean if requested
     if args.clean:
         clean_build(project_root)
+    
+    # Generate model integrity hashes before build
+    generate_model_hashes(project_root)
     
     # Build
     if not run_pyinstaller(project_root):

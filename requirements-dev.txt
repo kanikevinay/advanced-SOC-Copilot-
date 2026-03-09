@@ -1,0 +1,20 @@
+# =============================================================================
+# SOC Copilot — Development Dependencies
+# Install: pip install -r requirements-dev.txt
+# =============================================================================
+
+# Include base requirements
+-r requirements.txt
+
+# --- Testing ---
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# --- Code Quality ---
+black>=23.7.0
+ruff>=0.0.280
+mypy>=1.4.0
+pre-commit>=3.3.0
+
+# --- Build ---
+pyinstaller>=6.0.0

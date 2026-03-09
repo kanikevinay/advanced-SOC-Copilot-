@@ -47,6 +47,15 @@ class SplashScreen(QSplashScreen):
         painter.setPen(QColor("#888888"))
         painter.drawText(170, 235, "Real-Time Security Analysis")
         
+        # Draw BETA badge
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#ffa000"))
+        painter.drawRoundedRect(170, 250, 55, 22, 4, 4)
+        beta_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+        painter.setFont(beta_font)
+        painter.setPen(QColor("#1e1e1e"))
+        painter.drawText(178, 267, "BETA")
+        
         # Draw loading bar background
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#333333"))
@@ -56,7 +65,7 @@ class SplashScreen(QSplashScreen):
         version_font = QFont("Segoe UI", 10)
         painter.setFont(version_font)
         painter.setPen(QColor("#666666"))
-        painter.drawText(50, 380, "Version 0.1.0")
+        painter.drawText(50, 380, "Version 1.0.0-beta.1")
         
         # Draw copyright/branding
         painter.drawText(400, 380, "© SOC Copilot Team")

@@ -13,7 +13,7 @@
 ;   dist/SOC_Copilot_Setup_0.1.0.exe
 
 #define MyAppName "SOC Copilot"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.0.0-beta.1"
 #define MyAppPublisher "SOC Copilot Team"
 #define MyAppURL "https://github.com/BunnyPraneeth5/SOC-Copilot"
 #define MyAppExeName "SOC Copilot.exe"
@@ -112,4 +112,4 @@ end;
 ; Type: filesandordirs; Name: "{app}\logs"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nSOC Copilot is an offline Security Operations Center analysis tool with hybrid ML detection.%n%nNo administrator privileges required for default installation.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nSOC Copilot is an offline Security Operations Center analysis tool with hybrid ML detection.%n%n⚠ This is a BETA release. Features may change in future versions.%n%nNo administrator privileges required for default installation.

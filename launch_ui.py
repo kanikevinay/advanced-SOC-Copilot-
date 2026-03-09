@@ -2,11 +2,14 @@
 
 import sys
 import os
+import ctypes
+import subprocess
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root))
 
 
 def check_required_permissions(project_root: Path) -> bool:
@@ -65,6 +68,9 @@ def check_optional_permissions(project_root: Path) -> dict:
 
 def main():
     """Launch SOC Copilot UI with robust error handling and graceful degradation"""
+    # Track background exporter processes for cleanup
+    exporter_processes = []
+    
     try:
         # Check if we're in the right directory
         project_root = Path(__file__).parent
@@ -90,6 +96,12 @@ def main():
         
         # Check optional permissions (non-blocking)
         optional_perms = check_optional_permissions(project_root)
+        
+        # If running as admin, start system log exporters
+        if optional_perms.get("has_system_log_access"):
+            exporter_processes = start_system_log_exporters(project_root)
+            if exporter_processes:
+                print(f"Started {len(exporter_processes)} system log exporter(s).")
         
         # Import PyQt6 with helpful error message
         try:
@@ -161,12 +173,19 @@ def main():
                 print("This is expected without trained models.")
             print("UI will launch but analysis will not be available.")
         
+        # Start system log ingestion if running as admin
+        system_log_integration = None
+        if optional_perms.get("has_system_log_access"):
+            system_log_integration = start_system_log_ingestion(
+                controller, kill_switch, project_root
+            )
+        
         # Create and configure QApplication
         app = QApplication(sys.argv)
         
         # Set application properties
         app.setApplicationName("SOC Copilot")
-        app.setApplicationVersion("0.1.0")
+        app.setApplicationVersion("1.0.0-beta.1")
         app.setOrganizationName("SOC Copilot Team")
         
         # Handle high DPI displays
@@ -215,7 +234,6 @@ def main():
         
     except KeyboardInterrupt:
         print("\nShutdown requested by user.")
-        sys.exit(0)
     except Exception as e:
         print(f"Unexpected error launching SOC Copilot: {e}")
         print("\nTroubleshooting steps:")
@@ -223,7 +241,136 @@ def main():
         print("2. Reinstall: python setup.py")
         print("3. Check logs in logs/ directory")
         sys.exit(1)
+    finally:
+        # Cleanup: stop system log exporters
+        for proc in exporter_processes:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+
+def is_admin() -> bool:
+    """Check if running with administrator privileges."""
+    if sys.platform != "win32":
+        return os.geteuid() == 0
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def request_admin_elevation():
+    """Re-launch the current script with UAC elevation (Windows).
+    
+    If on Windows and not admin, triggers the UAC prompt.
+    If accepted, the current process exits and a new elevated process starts.
+    """
+    if sys.platform != "win32":
+        print("On Linux/macOS, re-run with: sudo python launch_ui.py")
+        return
+    
+    print("\nRequesting administrator privileges for system log access...")
+    try:
+        script = os.path.abspath(sys.argv[0])
+        params = " ".join(sys.argv[1:])
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, f'"{script}" {params}', None, 1
+        )
+        sys.exit(0)  # Exit current non-elevated process
+    except Exception as e:
+        print(f"Elevation failed: {e}")
+        print("Continuing without system log access.")
+
+
+def start_system_log_exporters(project_root: Path) -> list:
+    """Start PowerShell exporter scripts as hidden background processes.
+    
+    These export Windows Security and System event logs to files
+    that SOC Copilot can then ingest.
+    
+    Returns:
+        List of subprocess.Popen objects for cleanup
+    """
+    processes = []
+    exporters = [
+        ("Security", project_root / "scripts" / "exporters" / "export_windows_security.ps1"),
+        ("System", project_root / "scripts" / "exporters" / "export_windows_system.ps1"),
+    ]
+    
+    # Ensure output directory exists
+    log_dir = project_root / "logs" / "system"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    for name, script_path in exporters:
+        if not script_path.exists():
+            print(f"Warning: Exporter script not found: {script_path}")
+            continue
+        
+        try:
+            # Create empty log file so the tailer can start watching it
+            if name == "Security":
+                log_file = log_dir / "windows_security.log"
+            else:
+                log_file = log_dir / "windows_system.log"
+            log_file.touch(exist_ok=True)
+            
+            # Launch PowerShell exporter as a hidden background process
+            proc = subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-ExecutionPolicy", "Bypass",
+                    "-WindowStyle", "Hidden",
+                    "-File", str(script_path),
+                ],
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            processes.append(proc)
+            print(f"  ▶ Windows {name} log exporter started (PID {proc.pid})")
+        except Exception as e:
+            print(f"  ✗ Failed to start {name} exporter: {e}")
+    
+    return processes
+
+
+def start_system_log_ingestion(controller, kill_switch, project_root: Path):
+    """Wire SystemLogIntegration to the controller for live system log analysis.
+    
+    Args:
+        controller: AppController instance
+        kill_switch: KillSwitch instance
+        project_root: Project root path
+        
+    Returns:
+        SystemLogIntegration instance (or None if failed)
+    """
+    try:
+        from soc_copilot.phase4.ingestion.system_logs import SystemLogIntegration
+        
+        config_path = str(project_root / "config" / "ingestion" / "system_logs.yaml")
+        integration = SystemLogIntegration(
+            config_path=config_path,
+            killswitch_check=kill_switch.is_active,
+        )
+        integration.initialize(controller.process_batch)
+        integration.start()
+        
+        print("  ▶ System log ingestion started — analyzing live Windows events")
+        return integration
+    except Exception as e:
+        print(f"  ✗ System log ingestion failed: {e}")
+        return None
 
 
 if __name__ == "__main__":
+    # Auto-request admin if not elevated — needed for Windows Event Log access
+    if sys.platform == "win32" and not is_admin():
+        print("SOC Copilot needs administrator rights to read Windows Event Logs.")
+        print("Requesting elevation...")
+        request_admin_elevation()
+        # If we reach here, elevation was declined — continue without system log access
+        print("Continuing without system log access (file-based analysis still works).\n")
     main()
