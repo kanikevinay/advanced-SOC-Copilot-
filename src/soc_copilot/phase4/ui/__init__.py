@@ -3,6 +3,7 @@
 from .main_window import MainWindow
 from .dashboard import Dashboard
 from .alerts_view import AlertsView
+from .all_logs_view import AllLogsView
 from .controller_bridge import ControllerBridge
 from .config_panel import ConfigPanel
 from .splash_screen import SplashScreen, create_splash
@@ -21,6 +22,7 @@ __all__ = [
     "MainWindow", 
     "Dashboard",
     "AlertsView",
+    "AllLogsView",
     "ControllerBridge", 
     "ConfigPanel",
     "SplashScreen",

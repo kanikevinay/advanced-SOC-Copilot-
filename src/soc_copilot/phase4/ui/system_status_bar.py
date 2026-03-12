@@ -9,7 +9,7 @@ With tooltip expansion for detailed information.
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QFrame,
+    QWidget, QHBoxLayout, QLabel, QFrame, QPushButton,
     QGraphicsDropShadowEffect, QToolTip
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -47,25 +47,32 @@ class StatusIndicator(QWidget):
         # Label
         self.label = QLabel(label)
         self.label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.label.setStyleSheet("color: #ffffff;")
         layout.addWidget(self.label)
         
         # Value
         self.value = QLabel("")
         self.value.setFont(QFont("Segoe UI", 10))
-        self.value.setStyleSheet("color: #00d4ff;")
         layout.addWidget(self.value)
         
         # Info icon for tooltip
         self.info_icon = QLabel("ⓘ")
         self.info_icon.setFont(QFont("Segoe UI", 9))
-        self.info_icon.setStyleSheet("color: #555555;")
         self.info_icon.setCursor(Qt.CursorShape.WhatsThisCursor)
         self.info_icon.setVisible(False)
         layout.addWidget(self.info_icon)
         
         self.setLayout(layout)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._theme = {
+            "text_primary": "#ffffff",
+            "accent": "#00d4ff",
+            "text_muted": "#555555",
+        }
+        self.apply_theme({
+            "text_primary": "#ffffff",
+            "accent": "#00d4ff",
+            "text_muted": "#555555",
+        })
     
     def _update_led_style(self):
         color = self.COLORS.get(self._color, self.COLORS["gray"])
@@ -89,14 +96,21 @@ class StatusIndicator(QWidget):
             self._details = []
             self.info_icon.setVisible(False)
             self.setToolTip("")
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to static status indicator elements."""
+        self._theme = theme
+        self.label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.value.setStyleSheet(f"color: {theme['accent']};")
+        self.info_icon.setStyleSheet(f"color: {theme['text_muted']};")
     
     def enterEvent(self, event):
         if self._details:
-            self.info_icon.setStyleSheet("color: #00d4ff;")
+            self.info_icon.setStyleSheet(f"color: {self._theme['accent']};")
         super().enterEvent(event)
     
     def leaveEvent(self, event):
-        self.info_icon.setStyleSheet("color: #555555;")
+        self.info_icon.setStyleSheet(f"color: {self._theme['text_muted']};")
         super().leaveEvent(event)
 
 
@@ -110,6 +124,7 @@ class SystemStatusBar(QFrame):
     """
     
     status_update = pyqtSignal(dict)
+    theme_toggle_requested = pyqtSignal()
     
     def __init__(self, bridge):
         super().__init__()
@@ -118,12 +133,6 @@ class SystemStatusBar(QFrame):
         self._init_polling()
     
     def _init_ui(self):
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #0a1225;
-                border-bottom: 1px solid #1a2744;
-            }
-        """)
         self.setFixedHeight(40)
         
         layout = QHBoxLayout()
@@ -149,11 +158,18 @@ class SystemStatusBar(QFrame):
         layout.addWidget(self.governance_led)
         
         layout.addStretch()
+
+        self.theme_button = QPushButton("Theme: Dark")
+        self.theme_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_button.setToolTip("Cycle theme: Dark → Bright → System")
+        self.theme_button.clicked.connect(lambda: self.theme_toggle_requested.emit())
+        layout.addWidget(self.theme_button)
+
+        layout.addWidget(self._separator())
         
         # Results count (compact)
         self.results_label = QLabel("📊 0 results")
         self.results_label.setFont(QFont("Segoe UI", 10))
-        self.results_label.setStyleSheet("color: #888888;")
         layout.addWidget(self.results_label)
         
         # Separator
@@ -162,15 +178,67 @@ class SystemStatusBar(QFrame):
         # Last update time
         self.update_time = QLabel("")
         self.update_time.setFont(QFont("Segoe UI", 9))
-        self.update_time.setStyleSheet("color: #555555;")
         layout.addWidget(self.update_time)
         
         self.setLayout(layout)
+        self._separators = self.findChildren(QLabel)
+        self.apply_theme({
+            "status_bg": "#0a1225",
+            "border": "#1a2744",
+            "button_bg": "#16213e",
+            "button_hover": "#1a2744",
+            "button_pressed": "#0f1629",
+            "button_fg": "#ffffff",
+            "border_strong": "#2a3f5f",
+            "text_secondary": "#888888",
+            "text_muted": "#555555",
+            "text_primary": "#ffffff",
+            "accent": "#00d4ff",
+        })
     
     def _separator(self) -> QLabel:
         sep = QLabel("|")
-        sep.setStyleSheet("color: #1a2744;")
         return sep
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the status bar."""
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['status_bg']};
+                border-bottom: 1px solid {theme['border']};
+            }}
+        """)
+        for indicator in (self.pipeline_led, self.ingestion_led, self.governance_led):
+            indicator.apply_theme(theme)
+
+        self.theme_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme['button_bg']};
+                color: {theme['button_fg']};
+                border: 1px solid {theme['border_strong']};
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {theme['button_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {theme['button_pressed']};
+            }}
+        """)
+        self.results_label.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.update_time.setStyleSheet(f"color: {theme['text_muted']};")
+        for child in self.findChildren(QLabel):
+            if child.text() == "|":
+                child.setStyleSheet(f"color: {theme['border']};")
+
+    def set_theme_button_text(self, text: str, tooltip: str = ""):
+        """Update the theme button label."""
+        self.theme_button.setText(text)
+        if tooltip:
+            self.theme_button.setToolTip(tooltip)
     
     def _init_polling(self):
         """Start polling for status updates - 2 seconds (optimized from 1s)"""
@@ -279,6 +347,7 @@ class PermissionBanner(QFrame):
     """Warning banner for permission issues"""
     
     dismissed = pyqtSignal()
+    run_as_admin_requested = pyqtSignal()
     
     def __init__(self, message: str, icon: str = "⚠️"):
         super().__init__()
@@ -315,6 +384,7 @@ class PermissionBanner(QFrame):
             padding: 5px 10px;
         """)
         action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        action_btn.mousePressEvent = lambda e: self.run_as_admin_requested.emit()
         layout.addWidget(action_btn)
         
         # Close button

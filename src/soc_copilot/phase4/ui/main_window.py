@@ -7,23 +7,34 @@ Improvements over previous version:
 - Connected dashboard signals for filtered navigation
 """
 
+import sys
+import subprocess
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTabWidget, QStatusBar, QMenuBar, QMenu,
     QStackedWidget, QPushButton, QFrame, QLabel
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSettings
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QPolygonF, QFont
 from PyQt6.QtCore import QPointF
 
 from .dashboard_v2 import Dashboard
 from .alerts_view import AlertsView
+from .all_logs_view import AllLogsView
 from .alert_details import AlertDetailsPanel
 from .assistant_panel import AssistantPanel
 from .controller_bridge import ControllerBridge
 from .config_panel import ConfigPanel
 from .about_dialog import AboutDialog
 from .system_status_bar import SystemStatusBar, PermissionBanner, KillSwitchBanner
+from .theme import (
+    THEME_MODE_LABELS,
+    build_main_window_styles,
+    cycle_theme_mode,
+    get_resolved_theme,
+)
 
 
 class NavButton(QPushButton):
@@ -32,42 +43,56 @@ class NavButton(QPushButton):
     def __init__(self, icon: str, text: str, index: int):
         super().__init__(f"{icon}  {text}")
         self.index = index
+        self.base_text = f"{icon}  {text}"
         self._badge_count = 0
         self._badge_color = "#ff4444"
+        self._theme = None
         self.setCheckable(True)
         self.setFixedHeight(45)
         self._update_style(False)
     
     def _update_style(self, active: bool):
+        theme = self._theme or {
+            "accent": "#00d4ff",
+            "accent_fg": "#0a0a1a",
+            "text_secondary": "#888888",
+            "panel_hover": "#1a2744",
+            "text_primary": "#ffffff",
+        }
         if active:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #00d4ff;
-                    color: #0a0a1a;
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {theme['accent']};
+                    color: {theme['accent_fg']};
                     border: none;
                     border-radius: 8px;
                     padding: 10px 15px;
                     font-size: 13px;
                     font-weight: bold;
                     text-align: left;
-                }
+                }}
             """)
         else:
-            self.setStyleSheet("""
-                QPushButton {
+            self.setStyleSheet(f"""
+                QPushButton {{
                     background-color: transparent;
-                    color: #888888;
+                    color: {theme['text_secondary']};
                     border: none;
                     border-radius: 8px;
                     padding: 10px 15px;
                     font-size: 13px;
                     text-align: left;
-                }
-                QPushButton:hover {
-                    background-color: #1a2744;
-                    color: #ffffff;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {theme['panel_hover']};
+                    color: {theme['text_primary']};
+                }}
             """)
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the button."""
+        self._theme = theme
+        self._update_style(self.isChecked())
     
     def setActive(self, active: bool):
         self.setChecked(active)
@@ -80,18 +105,14 @@ class NavButton(QPushButton):
         self._update_text()
     
     def _update_text(self):
-        # Get base text (icon + name)
-        text_parts = self.text().split("  ")
-        base_text = "  ".join(text_parts[:2]) if len(text_parts) >= 2 else self.text()
-        
         if self._badge_count > 0:
             if self._badge_count > 99:
                 badge_text = "99+"
             else:
                 badge_text = str(self._badge_count)
-            self.setText(f"{base_text}  ({badge_text})")
+            self.setText(f"{self.base_text}  ({badge_text})")
         else:
-            self.setText(base_text)
+            self.setText(self.base_text)
 
 
 class Sidebar(QFrame):
@@ -102,17 +123,12 @@ class Sidebar(QFrame):
     def __init__(self, bridge):
         super().__init__()
         self.bridge = bridge
+        self._theme = None
         self._init_ui()
         self._start_polling()
     
     def _init_ui(self):
         self.setFixedWidth(200)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #0f1629;
-                border-right: 1px solid #1a2744;
-            }
-        """)
         
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 15, 12, 15)
@@ -121,7 +137,7 @@ class Sidebar(QFrame):
         # Logo/Title
         title = QLabel("🛡️ SOC Copilot")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet("color: #00d4ff; padding: 10px 0;")
+        self.title_label = title
         layout.addWidget(title)
         
         # Beta badge
@@ -135,29 +151,22 @@ class Sidebar(QFrame):
         """)
         beta_badge.setFixedWidth(50)
         beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.beta_badge = beta_badge
         layout.addWidget(beta_badge)
         
         # Simple status frame (replacing the counter cards)
         status_frame = QFrame()
-        status_frame.setStyleSheet("""
-            QFrame {
-                background-color: #16213e;
-                border: 1px solid #1a2744;
-                border-radius: 8px;
-            }
-        """)
+        self.status_frame = status_frame
         status_layout = QVBoxLayout()
         status_layout.setContentsMargins(12, 10, 12, 10)
         status_layout.setSpacing(4)
         
         self.status_indicator = QLabel("● Initializing...")
         self.status_indicator.setFont(QFont("Segoe UI", 11))
-        self.status_indicator.setStyleSheet("color: #ffa000;")
         status_layout.addWidget(self.status_indicator)
         
         self.status_detail = QLabel("Loading ML models")
         self.status_detail.setFont(QFont("Segoe UI", 9))
-        self.status_detail.setStyleSheet("color: #888888;")
         status_layout.addWidget(self.status_detail)
         
         status_frame.setLayout(status_layout)
@@ -166,16 +175,17 @@ class Sidebar(QFrame):
         # Navigation buttons
         layout.addSpacing(15)
         nav_label = QLabel("NAVIGATION")
-        nav_label.setStyleSheet("color: #555; font-size: 10px; font-weight: bold;")
+        self.nav_label = nav_label
         layout.addWidget(nav_label)
         
         self.nav_buttons = []
         nav_items = [
             ("📊", "Dashboard", 0),
             ("🚨", "Alerts", 1),
+            ("🗂️", "All Logs", 4),
             ("🔍", "Investigation", 2),
             ("🤖", "Assistant", 3),
-            ("⚙️", "Settings", 4),
+            ("⚙️", "Settings", 5),
         ]
         
         for icon, text, idx in nav_items:
@@ -191,10 +201,53 @@ class Sidebar(QFrame):
         
         # Version info
         version_label = QLabel("v1.0.0-beta.1")
-        version_label.setStyleSheet("color: #444444; font-size: 10px;")
+        self.version_label = version_label
         layout.addWidget(version_label)
         
         self.setLayout(layout)
+        self.apply_theme({
+            "sidebar_bg": "#0f1629",
+            "border": "#1a2744",
+            "accent": "#00d4ff",
+            "panel_hover": "#1a2744",
+            "text_muted": "#555555",
+            "text_secondary": "#888888",
+            "warning_text": "#ffa000",
+            "panel_bg": "#16213e",
+            "text_primary": "#ffffff",
+            "success_text": "#4CAF50",
+            "critical_text": "#ff4444",
+            "accent_fg": "#0a0a1a",
+        })
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the sidebar."""
+        self._theme = theme
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['sidebar_bg']};
+                border-right: 1px solid {theme['border']};
+            }}
+        """)
+        self.title_label.setStyleSheet(f"color: {theme['accent']}; padding: 10px 0;")
+        self.beta_badge.setStyleSheet(f"""
+            color: {theme['accent_fg']};
+            background-color: #ffa000;
+            border-radius: 4px;
+            padding: 2px 8px;
+        """)
+        self.status_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['panel_bg']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+            }}
+        """)
+        self.status_detail.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.nav_label.setStyleSheet(f"color: {theme['text_muted']}; font-size: 10px; font-weight: bold;")
+        self.version_label.setStyleSheet(f"color: {theme['text_muted']}; font-size: 10px;")
+        for btn in self.nav_buttons:
+            btn.apply_theme(theme)
     
     def _on_nav_click(self, index: int):
         for btn in self.nav_buttons:
@@ -211,22 +264,23 @@ class Sidebar(QFrame):
     def _update_status(self):
         try:
             stats = self.bridge.get_stats()
+            theme = self._theme or {}
             
             # Update status indicator
             if stats.get("shutdown_flag"):
                 self.status_indicator.setText("🛑 Kill Switch Active")
-                self.status_indicator.setStyleSheet("color: #ff4444;")
+                self.status_indicator.setStyleSheet(f"color: {theme.get('critical_text', '#ff4444')};")
                 self.status_detail.setText("ML processing halted")
             elif stats.get("pipeline_loaded"):
                 self.status_indicator.setText("● Online")
-                self.status_indicator.setStyleSheet("color: #4CAF50;")
+                self.status_indicator.setStyleSheet(f"color: {theme.get('success_text', '#4CAF50')};")
                 
                 sources = stats.get("sources_count", 0)
                 results = stats.get("results_stored", 0)
                 self.status_detail.setText(f"{sources} sources • {results} results")
             else:
                 self.status_indicator.setText("● Initializing...")
-                self.status_indicator.setStyleSheet("color: #ffa000;")
+                self.status_indicator.setStyleSheet(f"color: {theme.get('warning_text', '#ffa000')};")
                 self.status_detail.setText("Loading ML models")
             
             # Update nav badges
@@ -253,7 +307,7 @@ class Sidebar(QFrame):
                 
         except Exception:
             self.status_indicator.setText("● Error")
-            self.status_indicator.setStyleSheet("color: #ff4444;")
+            self.status_indicator.setStyleSheet(f"color: {(self._theme or {}).get('critical_text', '#ff4444')};")
             self.status_detail.setText("Connection failed")
 
 
@@ -265,78 +319,17 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.bridge = ControllerBridge(controller)
+        self.settings = QSettings("SOC Copilot", "SOC Copilot")
+        self.theme_mode = self.settings.value("ui/theme_mode", "dark", type=str) or "dark"
+        self.theme = get_resolved_theme(self.theme_mode)[1]
         self._init_ui()
         self._init_menu()
         self._set_window_icon()
+        self._apply_theme(self.theme_mode, persist=False)
     
     def _init_ui(self):
         self.setWindowTitle("SOC Copilot [BETA] - Real-Time Security Analysis")
         self.setGeometry(50, 50, 1500, 950)
-        
-        # Apply modern dark theme
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #0a0a1a;
-                color: #ffffff;
-            }
-            QWidget {
-                background-color: #0a0a1a;
-                color: #ffffff;
-                font-family: 'Segoe UI', Arial, sans-serif;
-            }
-            QTabWidget::pane {
-                border: none;
-                background-color: #0f1629;
-                border-radius: 8px;
-            }
-            QTabBar::tab {
-                background-color: #0a0a1a;
-                color: #888888;
-                padding: 10px 20px;
-                margin-right: 2px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-            }
-            QTabBar::tab:selected {
-                background-color: #0f1629;
-                color: #00d4ff;
-                font-weight: bold;
-            }
-            QTableWidget {
-                background-color: #0f1629;
-                alternate-background-color: #12192e;
-                gridline-color: #1a2744;
-                border: none;
-                border-radius: 8px;
-                selection-background-color: #00d4ff;
-                selection-color: #0a0a1a;
-            }
-            QHeaderView::section {
-                background-color: #0a1225;
-                color: #ffffff;
-                padding: 10px;
-                border: none;
-                font-weight: bold;
-            }
-            QScrollBar:vertical {
-                background-color: #0a0a1a;
-                width: 8px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #2a3f5f;
-                border-radius: 4px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #3a5f8f;
-            }
-            QStatusBar {
-                background-color: #0a1225;
-                color: #888888;
-                padding: 5px 15px;
-            }
-        """)
         
         # Central widget
         central = QWidget()
@@ -359,6 +352,7 @@ class MainWindow(QMainWindow):
         
         # System status bar at top (consolidated)
         self.system_status_bar = SystemStatusBar(self.bridge)
+        self.system_status_bar.theme_toggle_requested.connect(self._cycle_theme)
         content_layout.addWidget(self.system_status_bar)
         
         # Banners
@@ -370,6 +364,7 @@ class MainWindow(QMainWindow):
             self.permission_banner = PermissionBanner(
                 "System log access requires Administrator privileges."
             )
+            self.permission_banner.run_as_admin_requested.connect(self._restart_as_admin)
             content_layout.addWidget(self.permission_banner)
         
         # Stacked widget for navigation pages
@@ -379,7 +374,7 @@ class MainWindow(QMainWindow):
         self.dashboard = Dashboard(self.bridge)
         self.dashboard.navigate_to_alerts.connect(lambda: self._on_nav_changed(1))
         self.dashboard.navigate_to_alerts_filtered.connect(self._on_navigate_alerts_filtered)
-        self.dashboard.navigate_to_settings.connect(lambda: self._on_nav_changed(4))
+        self.dashboard.navigate_to_settings.connect(lambda: self._on_nav_changed(5))
         self.dashboard.alert_selected.connect(self._on_alert_selected)
         self.page_stack.addWidget(self.dashboard)
         
@@ -397,7 +392,11 @@ class MainWindow(QMainWindow):
         self.assistant_panel = AssistantPanel()
         self.page_stack.addWidget(self.assistant_panel)
         
-        # Page 4: Settings
+        # Page 4: All Logs
+        self.all_logs_view = AllLogsView(self.bridge)
+        self.page_stack.addWidget(self.all_logs_view)
+
+        # Page 5: Settings
         self.config_panel = ConfigPanel(self.bridge)
         self.page_stack.addWidget(self.config_panel)
         
@@ -429,10 +428,12 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(lambda: self._on_nav_changed(1))
         QShortcut(QKeySequence("Ctrl+3"), self).activated.connect(lambda: self._on_nav_changed(2))
         QShortcut(QKeySequence("Ctrl+4"), self).activated.connect(lambda: self._on_nav_changed(3))
-        QShortcut(QKeySequence("Ctrl+,"), self).activated.connect(lambda: self._on_nav_changed(4))
+        QShortcut(QKeySequence("Ctrl+5"), self).activated.connect(lambda: self._on_nav_changed(4))
+        QShortcut(QKeySequence("Ctrl+,"), self).activated.connect(lambda: self._on_nav_changed(5))
         
         # Refresh shortcut
         QShortcut(QKeySequence("F5"), self).activated.connect(self._refresh_current_view)
+        QShortcut(QKeySequence("Ctrl+T"), self).activated.connect(self._cycle_theme)
         
         # Escape to return to dashboard
         QShortcut(QKeySequence("Escape"), self).activated.connect(lambda: self._on_nav_changed(0))
@@ -444,6 +445,8 @@ class MainWindow(QMainWindow):
             self.dashboard.refresh()
         elif current_index == 1:
             self.alerts_view.refresh()
+        elif current_index == 4:
+            self.all_logs_view.refresh()
         self.status_bar.showMessage("View refreshed", 1000)
     
     def _on_nav_changed(self, index: int):
@@ -520,24 +523,6 @@ class MainWindow(QMainWindow):
     def _init_menu(self):
         """Initialize menu bar"""
         menubar = self.menuBar()
-        menubar.setStyleSheet("""
-            QMenuBar {
-                background-color: #0a1225;
-                color: #ffffff;
-                padding: 2px;
-            }
-            QMenuBar::item { padding: 5px 10px; }
-            QMenuBar::item:selected { background-color: #1a2744; }
-            QMenu {
-                background-color: #0f1629;
-                color: #ffffff;
-                border: 1px solid #1a2744;
-            }
-            QMenu::item:selected {
-                background-color: #00d4ff;
-                color: #0a0a1a;
-            }
-        """)
         
         # File menu
         file_menu = menubar.addMenu("&File")
@@ -552,11 +537,23 @@ class MainWindow(QMainWindow):
         nav_alerts.setShortcut("Ctrl+2")
         nav_alerts.triggered.connect(lambda: self._on_nav_changed(1))
         file_menu.addAction(nav_alerts)
+
+        nav_all_logs = QAction("🗂️ All Logs", self)
+        nav_all_logs.setShortcut("Ctrl+5")
+        nav_all_logs.triggered.connect(lambda: self._on_nav_changed(4))
+        file_menu.addAction(nav_all_logs)
         
         nav_settings = QAction("⚙️ Settings", self)
         nav_settings.setShortcut("Ctrl+,")
-        nav_settings.triggered.connect(lambda: self._on_nav_changed(4))
+        nav_settings.triggered.connect(lambda: self._on_nav_changed(5))
         file_menu.addAction(nav_settings)
+
+        file_menu.addSeparator()
+
+        self.theme_action = QAction("Switch Theme", self)
+        self.theme_action.setShortcut("Ctrl+T")
+        self.theme_action.triggered.connect(self._cycle_theme)
+        file_menu.addAction(self.theme_action)
         
         file_menu.addSeparator()
         
@@ -616,3 +613,55 @@ class MainWindow(QMainWindow):
         """Show about dialog"""
         dialog = AboutDialog(self)
         dialog.exec()
+
+    def _cycle_theme(self):
+        """Cycle through Dark, Bright, and System theme modes."""
+        next_mode = cycle_theme_mode(self.theme_mode)
+        self._apply_theme(next_mode)
+        self.status_bar.showMessage(f"Theme switched to {THEME_MODE_LABELS[next_mode]}", 2000)
+
+    def _apply_theme(self, theme_mode: str, persist: bool = True):
+        """Apply a theme mode across the active UI."""
+        self.theme_mode = theme_mode
+        resolved_name, theme = get_resolved_theme(theme_mode)
+        self.theme = theme
+
+        if persist:
+            self.settings.setValue("ui/theme_mode", theme_mode)
+
+        self.setStyleSheet(build_main_window_styles(theme))
+        self.sidebar.apply_theme(theme)
+        self.system_status_bar.apply_theme(theme)
+        button_text = f"Theme: {THEME_MODE_LABELS[theme_mode]}"
+        tooltip = f"Cycle theme: Dark → Bright → System\nCurrent system theme resolves to {resolved_name.title()}"
+        self.system_status_bar.set_theme_button_text(button_text, tooltip)
+
+        for widget in (
+            self.dashboard,
+            self.alerts_view,
+            self.all_logs_view,
+            self.config_panel,
+            getattr(self, "permission_banner", None),
+            self.killswitch_banner,
+        ):
+            if widget is not None and hasattr(widget, "apply_theme"):
+                widget.apply_theme(theme)
+
+        if hasattr(self, "theme_action"):
+            self.theme_action.setText(f"Switch Theme ({THEME_MODE_LABELS[theme_mode]})")
+
+    def _restart_as_admin(self):
+        """Relaunch app with elevation request enabled."""
+        try:
+            project_root = Path(__file__).resolve().parents[4]
+            launcher = project_root / "launch_ui.py"
+
+            subprocess.Popen(
+                [sys.executable, str(launcher), "--elevate"],
+                cwd=str(project_root),
+            )
+
+            self.status_bar.showMessage("Requesting administrator relaunch...", 2500)
+            QTimer.singleShot(300, self.close)
+        except Exception as e:
+            self.status_bar.showMessage(f"Failed to relaunch as admin: {e}", 5000)

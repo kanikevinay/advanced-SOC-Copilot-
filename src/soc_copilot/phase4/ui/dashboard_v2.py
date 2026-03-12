@@ -71,6 +71,10 @@ class ThreatBanner(QFrame):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(80)
+        self._theme = None
+        self._current_level = "normal"
+        self._critical_count = 0
+        self._high_count = 0
         self._init_ui()
     
     def _init_ui(self):
@@ -89,7 +93,6 @@ class ThreatBanner(QFrame):
         
         self.detail_label = QLabel("No critical threats detected")
         self.detail_label.setFont(QFont("Segoe UI", 11))
-        self.detail_label.setStyleSheet("color: #888888;")
         
         text_layout.addWidget(self.level_label)
         text_layout.addWidget(self.detail_label)
@@ -98,6 +101,7 @@ class ThreatBanner(QFrame):
         layout.addStretch()
         
         self.setLayout(layout)
+        self.apply_theme({"text_secondary": "#888888"})
         self.set_level("normal", 0, 0)
     
     def set_level(self, level: str, critical: int, high: int):
@@ -111,6 +115,9 @@ class ThreatBanner(QFrame):
         }
         
         bg, fg, icon, text = levels.get(level, levels["normal"])
+        self._current_level = level
+        self._critical_count = critical
+        self._high_count = high
         
         self.setStyleSheet(f"""
             QFrame {{
@@ -133,6 +140,12 @@ class ThreatBanner(QFrame):
         else:
             self.detail_label.setText("Routine activity only")
 
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the banner's secondary text."""
+        self._theme = theme
+        self.detail_label.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.set_level(self._current_level, self._critical_count, self._high_count)
+
 
 class SystemStatusStrip(QFrame):
     """Zone B: Consolidated system status"""
@@ -140,16 +153,10 @@ class SystemStatusStrip(QFrame):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(40)
+        self._theme = None
         self._init_ui()
     
     def _init_ui(self):
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #16213e;
-                border-bottom: 1px solid #1a2744;
-            }
-        """)
-        
         layout = QHBoxLayout()
         layout.setContentsMargins(20, 0, 20, 0)
         
@@ -159,7 +166,6 @@ class SystemStatusStrip(QFrame):
         
         for lbl in [self.pipeline_label, self.ingestion_label, self.governance_label]:
             lbl.setFont(QFont("Segoe UI", 10))
-            lbl.setStyleSheet("color: #888888;")
             layout.addWidget(lbl)
             layout.addWidget(self._separator())
         
@@ -167,15 +173,36 @@ class SystemStatusStrip(QFrame):
         
         self.timestamp_label = QLabel("")
         self.timestamp_label.setFont(QFont("Segoe UI", 9))
-        self.timestamp_label.setStyleSheet("color: #555555;")
         layout.addWidget(self.timestamp_label)
         
         self.setLayout(layout)
+        self.apply_theme({
+            "panel_bg": "#16213e",
+            "border": "#1a2744",
+            "border_strong": "#2a3f5f",
+            "text_secondary": "#888888",
+            "text_muted": "#555555",
+        })
     
     def _separator(self):
         sep = QLabel("|")
-        sep.setStyleSheet("color: #2a3f5f;")
         return sep
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the status strip."""
+        self._theme = theme
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['panel_bg']};
+                border-bottom: 1px solid {theme['border']};
+            }}
+        """)
+        for lbl in (self.pipeline_label, self.ingestion_label, self.governance_label):
+            lbl.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.timestamp_label.setStyleSheet(f"color: {theme['text_muted']};")
+        for child in self.findChildren(QLabel):
+            if child.text() == "|":
+                child.setStyleSheet(f"color: {theme['border_strong']};")
     
     def update_status(self, pipeline: bool, sources: int, running: bool, killswitch: bool):
         """Update all status indicators using centralized state mappings"""
@@ -211,22 +238,12 @@ class MetricCard(QFrame):
         super().__init__()
         self.title = title
         self.color = color
+        self._theme = None
         self.setFixedHeight(90)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._init_ui(title, icon, color)
     
     def _init_ui(self, title: str, icon: str, color: str):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: #16213e;
-                border-left: 4px solid {color};
-                border-radius: 6px;
-            }}
-            QFrame:hover {{
-                background-color: #1a2744;
-            }}
-        """)
-        
         layout = QVBoxLayout()
         layout.setContentsMargins(15, 10, 15, 10)
         layout.setSpacing(5)
@@ -238,22 +255,42 @@ class MetricCard(QFrame):
         
         title_lbl = QLabel(title)
         title_lbl.setFont(QFont("Segoe UI", 10))
-        title_lbl.setStyleSheet("color: #888888;")
+        self.title_label = title_lbl
         header.addWidget(title_lbl)
         header.addStretch()
         
         self.value_label = QLabel("0")
         self.value_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
-        self.value_label.setStyleSheet(f"color: {color};")
         
         layout.addLayout(header)
         layout.addWidget(self.value_label)
         layout.addStretch()
         
         self.setLayout(layout)
+        self.apply_theme({
+            "panel_bg": "#16213e",
+            "panel_hover": "#1a2744",
+            "text_secondary": "#888888",
+        })
     
     def set_value(self, value: int):
         self.value_label.setText(str(value))
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the metric card."""
+        self._theme = theme
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['panel_bg']};
+                border-left: 4px solid {self.color};
+                border-radius: 6px;
+            }}
+            QFrame:hover {{
+                background-color: {theme['panel_hover']};
+            }}
+        """)
+        self.title_label.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.value_label.setStyleSheet(f"color: {self.color};")
     
     def mousePressEvent(self, event):
         self.clicked.emit(self.title)
@@ -292,6 +329,11 @@ class MetricCardsRow(QFrame):
         self.medium_card.set_value(medium)
         self.low_card.set_value(low)
 
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to all metric cards."""
+        for card in [self.total_card, self.critical_card, self.high_card, self.medium_card, self.low_card]:
+            card.apply_theme(theme)
+
 
 class QuickActionsBar(QFrame):
     """Zone D: Quick action buttons"""
@@ -302,6 +344,7 @@ class QuickActionsBar(QFrame):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(60)
+        self._theme = None
         self._init_ui()
     
     def _init_ui(self):
@@ -310,33 +353,9 @@ class QuickActionsBar(QFrame):
         layout.setSpacing(10)
         
         self.upload_btn = QPushButton("📁 Upload Logs")
-        self.upload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #00d4ff;
-                color: #0a0a1a;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover { background-color: #00a8cc; }
-            QPushButton:disabled { background-color: #555555; color: #888888; }
-        """)
         self.upload_btn.clicked.connect(self.upload_clicked.emit)
         
         self.refresh_btn = QPushButton("🔄 Refresh")
-        self.refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #424242;
-                color: #ffffff;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-size: 13px;
-            }
-            QPushButton:hover { background-color: #616161; }
-        """)
         self.refresh_btn.clicked.connect(self.refresh_clicked.emit)
         
         layout.addWidget(self.upload_btn)
@@ -344,6 +363,44 @@ class QuickActionsBar(QFrame):
         layout.addStretch()
         
         self.setLayout(layout)
+        self.apply_theme({
+            "accent": "#00d4ff",
+            "accent_hover": "#00a8cc",
+            "accent_fg": "#0a0a1a",
+            "button_bg": "#424242",
+            "button_hover": "#616161",
+            "button_fg": "#ffffff",
+            "text_muted": "#555555",
+            "text_secondary": "#888888",
+        })
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to quick action buttons."""
+        self._theme = theme
+        self.upload_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme['accent']};
+                color: {theme['accent_fg']};
+                border: none;
+                padding: 12px 24px;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {theme['accent_hover']}; }}
+            QPushButton:disabled {{ background-color: {theme['text_muted']}; color: {theme['text_secondary']}; }}
+        """)
+        self.refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme['button_bg']};
+                color: {theme['button_fg']};
+                border: none;
+                padding: 12px 24px;
+                border-radius: 6px;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {theme['button_hover']}; }}
+        """)
 
 
 class RecentAlertsTimeline(QFrame):
@@ -353,6 +410,7 @@ class RecentAlertsTimeline(QFrame):
     
     def __init__(self):
         super().__init__()
+        self._theme = None
         self._init_ui()
     
     def _init_ui(self):
@@ -364,11 +422,11 @@ class RecentAlertsTimeline(QFrame):
         header = QHBoxLayout()
         title = QLabel("📋 Recent Alerts")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        self.title_label = title
         header.addWidget(title)
         header.addStretch()
         
         self.count_label = QLabel("0 alerts")
-        self.count_label.setStyleSheet("color: #888888; font-size: 11px;")
         header.addWidget(self.count_label)
         
         layout.addLayout(header)
@@ -389,11 +447,20 @@ class RecentAlertsTimeline(QFrame):
         # Empty state
         self.empty_label = QLabel("No alerts • Upload logs to begin analysis")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #666666; padding: 40px;")
         self.empty_label.hide()
         layout.addWidget(self.empty_label)
         
         self.setLayout(layout)
+        self.apply_theme({
+            "surface_bg": "#0f1629",
+            "text_primary": "#ffffff",
+            "text_secondary": "#888888",
+            "text_muted": "#666666",
+            "border": "#1a2744",
+            "scrollbar_bg": "#0a0a1a",
+            "scrollbar_handle": "#2a3f5f",
+            "scrollbar_handle_hover": "#3a5f8f",
+        })
     
     def update_alerts(self, alerts_data: list):
         """Update with latest 10 alerts"""
@@ -435,7 +502,21 @@ class RecentAlertsTimeline(QFrame):
         
         self.table.setUpdatesEnabled(True)
         self.table.resizeColumnsToContents()
-    
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the recent alerts panel."""
+        self._theme = theme
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['surface_bg']};
+                border: 1px solid {theme['border']};
+                border-radius: 10px;
+            }}
+        """)
+        self.title_label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.count_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 11px;")
+        self.empty_label.setStyleSheet(f"color: {theme['text_muted']}; padding: 40px;")
+
     def _get_priority_color(self, priority: str) -> QColor:
         p = priority.lower()
         if "critical" in p:
@@ -445,13 +526,174 @@ class RecentAlertsTimeline(QFrame):
         elif "medium" in p:
             return QColor("#ffaa00")
         return QColor("#ffffff")
-    
+
     def _on_row_clicked(self, item):
         row = item.row()
-        # Retrieve batch_id from UserRole in first column
         batch_id = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         classification = self.table.item(row, 2).text()
         self.alert_clicked.emit(batch_id, classification)
+
+
+class LiveAlertDashboard(QFrame):
+    """Live alert dashboard that prioritizes critical log alerts."""
+
+    alert_clicked = pyqtSignal(str, str)
+
+    def __init__(self):
+        super().__init__()
+        self._theme = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        self.title_label = QLabel("🔴 Live Alert Dashboard")
+        self.title_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        header.addWidget(self.title_label)
+        header.addStretch()
+
+        self.state_badge = QLabel("Watching")
+        self.state_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.state_badge.setMinimumWidth(88)
+        header.addWidget(self.state_badge)
+        layout.addLayout(header)
+
+        summary = QHBoxLayout()
+        summary.setSpacing(12)
+        self.critical_summary = QLabel("0 critical")
+        self.high_summary = QLabel("0 high")
+        self.latest_summary = QLabel("Latest: --")
+        for label in (self.critical_summary, self.high_summary, self.latest_summary):
+            label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            summary.addWidget(label)
+        summary.addStretch()
+        layout.addLayout(summary)
+
+        self.feed_table = QTableWidget()
+        self.feed_table.setColumnCount(4)
+        self.feed_table.setHorizontalHeaderLabels(["Priority", "Time", "Classification", "Source"])
+        self.feed_table.verticalHeader().setVisible(False)
+        self.feed_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.feed_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.feed_table.setMaximumHeight(260)
+        self.feed_table.horizontalHeader().setStretchLastSection(True)
+        self.feed_table.itemClicked.connect(self._on_row_clicked)
+        layout.addWidget(self.feed_table)
+
+        self.empty_label = QLabel("No live critical or high-priority alerts yet.")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty_label)
+
+        self.setLayout(layout)
+        self.apply_theme({
+            "surface_bg": "#0f1629",
+            "border": "#1a2744",
+            "text_primary": "#ffffff",
+            "text_secondary": "#888888",
+            "text_muted": "#666666",
+            "critical_bg": "#4a0000",
+            "critical_border": "#ff4444",
+            "critical_text": "#ff6666",
+            "warning_bg": "#2d2d00",
+            "warning_border": "#665c00",
+            "warning_text": "#ffcc00",
+            "panel_hover": "#1a2744",
+        })
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the live alert dashboard."""
+        self._theme = theme
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['surface_bg']};
+                border: 1px solid {theme['border']};
+                border-radius: 10px;
+            }}
+        """)
+        self.title_label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.critical_summary.setStyleSheet(f"color: {theme['critical_text']};")
+        self.high_summary.setStyleSheet(f"color: {theme['warning_text']};")
+        self.latest_summary.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.empty_label.setStyleSheet(f"color: {theme['text_muted']}; padding: 20px;")
+
+    def update_alerts(self, alerts_data: list):
+        """Update the live feed with critical alerts first, then high alerts."""
+        critical_alerts = [alert for alert in alerts_data if "critical" in alert["priority"].lower()]
+        high_alerts = [alert for alert in alerts_data if "high" in alert["priority"].lower()]
+        focus_alerts = (critical_alerts + high_alerts)[:8]
+
+        latest_time = focus_alerts[0]["time"] if focus_alerts else "--"
+        self.critical_summary.setText(f"{len(critical_alerts)} critical")
+        self.high_summary.setText(f"{len(high_alerts)} high")
+        self.latest_summary.setText(f"Latest: {latest_time}")
+
+        if critical_alerts:
+            badge_bg = self._theme['critical_bg']
+            badge_fg = self._theme['critical_text']
+            badge_border = self._theme['critical_border']
+            self.state_badge.setText("Critical")
+        elif high_alerts:
+            badge_bg = self._theme['warning_bg']
+            badge_fg = self._theme['warning_text']
+            badge_border = self._theme['warning_border']
+            self.state_badge.setText("Elevated")
+        else:
+            badge_bg = self._theme['panel_hover']
+            badge_fg = self._theme['text_secondary']
+            badge_border = self._theme['border']
+            self.state_badge.setText("Watching")
+
+        self.state_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {badge_bg};
+                color: {badge_fg};
+                border: 1px solid {badge_border};
+                border-radius: 12px;
+                padding: 4px 10px;
+                font-weight: bold;
+            }}
+        """)
+
+        self.feed_table.setRowCount(len(focus_alerts))
+        self.feed_table.setVisible(bool(focus_alerts))
+        self.empty_label.setVisible(not focus_alerts)
+
+        for row, alert in enumerate(focus_alerts):
+            items = [
+                QTableWidgetItem(alert["priority"]),
+                QTableWidgetItem(alert["time"]),
+                QTableWidgetItem(alert["classification"]),
+                QTableWidgetItem(alert["source_ip"]),
+            ]
+            items[0].setData(Qt.ItemDataRole.UserRole, (alert["batch_id"], alert["classification"]))
+
+            for col, item in enumerate(items):
+                self.feed_table.setItem(row, col, item)
+
+            if "critical" in alert["priority"].lower():
+                foreground = QColor(self._theme["critical_text"])
+                background = QColor(self._theme["critical_bg"])
+            else:
+                foreground = QColor(self._theme["warning_text"])
+                background = QColor(self._theme["warning_bg"])
+
+            for col in range(4):
+                cell = self.feed_table.item(row, col)
+                if cell is not None:
+                    cell.setForeground(foreground)
+                    if col == 0:
+                        cell.setBackground(background)
+
+        self.feed_table.resizeColumnsToContents()
+
+    def _on_row_clicked(self, item):
+        payload = self.feed_table.item(item.row(), 0).data(Qt.ItemDataRole.UserRole)
+        if payload:
+            batch_id, classification = payload
+            self.alert_clicked.emit(batch_id, classification)
 
 
 class Dashboard(QWidget):
@@ -467,6 +709,7 @@ class Dashboard(QWidget):
         self.bridge = bridge
         self._alerts_cache = []
         self._worker = None  # Background file processing thread
+        self._theme = None
         self._init_ui()
         
         # Unified polling (3 seconds)
@@ -501,9 +744,17 @@ class Dashboard(QWidget):
         layout.addWidget(self.actions_bar)
         
         # Zone E: Recent Alerts
+        alerts_row = QHBoxLayout()
+        alerts_row.setSpacing(15)
+
+        self.live_alerts_panel = LiveAlertDashboard()
+        self.live_alerts_panel.alert_clicked.connect(self.alert_selected.emit)
+        alerts_row.addWidget(self.live_alerts_panel, 1)
+
         self.alerts_timeline = RecentAlertsTimeline()
         self.alerts_timeline.alert_clicked.connect(self.alert_selected.emit)
-        layout.addWidget(self.alerts_timeline, 1)
+        alerts_row.addWidget(self.alerts_timeline, 2)
+        layout.addLayout(alerts_row, 1)
         
         # Progress bar for file uploads (hidden by default)
         self.progress_bar = QProgressBar()
@@ -524,6 +775,34 @@ class Dashboard(QWidget):
         layout.addWidget(self.progress_bar)
         
         self.setLayout(layout)
+        self.apply_theme({
+            "window_bg": "#0a0a1a",
+            "text_muted": "#666666",
+            "panel_bg": "#16213e",
+            "border": "#1a2744",
+            "accent": "#00d4ff",
+            "accent_hover": "#00a8cc",
+            "accent_fg": "#0a0a1a",
+            "button_bg": "#424242",
+            "button_hover": "#616161",
+            "button_fg": "#ffffff",
+            "text_secondary": "#888888",
+            "text_primary": "#ffffff",
+            "scrollbar_bg": "#0a0a1a",
+            "scrollbar_handle": "#2a3f5f",
+            "scrollbar_handle_hover": "#3a5f8f",
+            "border_strong": "#2a3f5f",
+            "critical_bg": "#4a0000",
+            "critical_border": "#ff4444",
+            "critical_text": "#ff6666",
+            "warning_bg": "#2d2d00",
+            "warning_border": "#665c00",
+            "warning_text": "#ffcc00",
+            "surface_bg": "#0f1629",
+            "surface_alt_bg": "#12192e",
+            "panel_hover": "#1a2744",
+            "success_text": "#4CAF50",
+        })
     
     def refresh(self):
         """Unified refresh - single data fetch"""
@@ -584,11 +863,37 @@ class Dashboard(QWidget):
             # Update Zone C: Metrics
             self.metrics_row.update_metrics(total, critical, high, medium, low)
             
+            # Update live alert dashboard
+            self.live_alerts_panel.update_alerts(alerts_data)
+
             # Update Zone E: Alerts Timeline
             self.alerts_timeline.update_alerts(alerts_data)
             
         except Exception:
             self.threat_banner.set_level("normal", 0, 0)
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors across the dashboard widgets."""
+        self._theme = theme
+        self.setStyleSheet(f"background-color: {theme['window_bg']}; color: {theme['text_primary']};")
+        self.threat_banner.apply_theme(theme)
+        self.status_strip.apply_theme(theme)
+        self.metrics_row.apply_theme(theme)
+        self.actions_bar.apply_theme(theme)
+        self.live_alerts_panel.apply_theme(theme)
+        self.alerts_timeline.apply_theme(theme)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                border-radius: 3px;
+                background-color: {theme['surface_alt_bg']};
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {theme['accent']}, stop:1 {theme['success_text']});
+                border-radius: 3px;
+            }}
+        """)
     
     def _on_metric_clicked(self, card_title: str):
         """Handle metric card click"""

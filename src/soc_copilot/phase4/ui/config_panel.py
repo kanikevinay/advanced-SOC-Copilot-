@@ -132,21 +132,26 @@ class StatusIndicator(QFrame):
         
         # Label
         label_widget = QLabel(f"{label}:")
-        label_widget.setStyleSheet("color: #888888; font-weight: bold;")
+        self.label_widget = label_widget
         layout.addWidget(label_widget)
         
         # Status value
         self.status_label = QLabel(status)
-        self.status_label.setStyleSheet("color: #ffffff;")
         layout.addWidget(self.status_label)
         
         layout.addStretch()
         self.setLayout(layout)
+        self.apply_theme({"text_secondary": "#888888", "text_primary": "#ffffff"})
     
     def update_status(self, status: str, color: str):
         """Update status text and color"""
         self.status_label.setText(status)
         self.dot.setStyleSheet(f"color: {color}; font-size: 16px;")
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to indicator labels."""
+        self.label_widget.setStyleSheet(f"color: {theme['text_secondary']}; font-weight: bold;")
+        self.status_label.setStyleSheet(f"color: {theme['text_primary']};")
 
 
 class ConfigPanel(QWidget):
@@ -161,6 +166,7 @@ class ConfigPanel(QWidget):
     def __init__(self, bridge=None, project_root: Optional[Path] = None):
         super().__init__()
         self.bridge = bridge
+        self._theme = None
         
         if project_root is None:
             project_root = Path(__file__).parent.parent.parent.parent.parent
@@ -180,22 +186,17 @@ class ConfigPanel(QWidget):
         # Title
         title = QLabel("Configuration Status")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        self.title_label = title
         layout.addWidget(title)
         
         # Restart warning (hidden by default)
         self.restart_warning = QFrame()
-        self.restart_warning.setStyleSheet("""
-            QFrame {
-                background-color: #FFC107;
-                border-radius: 5px;
-                padding: 10px;
-            }
-        """)
         warning_layout = QHBoxLayout()
         warning_icon = QLabel("⚠️")
         warning_icon.setFont(QFont("Arial", 18))
+        self.warning_icon = warning_icon
         warning_text = QLabel("Configuration changed. Restart required for changes to take effect.")
-        warning_text.setStyleSheet("color: #000000; font-weight: bold;")
+        self.warning_text = warning_text
         warning_layout.addWidget(warning_icon)
         warning_layout.addWidget(warning_text)
         warning_layout.addStretch()
@@ -205,24 +206,11 @@ class ConfigPanel(QWidget):
         
         # System Logs Toggle Section
         toggle_group = QGroupBox("System Log Ingestion")
-        toggle_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #444444;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
+        self.toggle_group = toggle_group
         toggle_layout = QHBoxLayout()
         
         toggle_label = QLabel("Enable System Logs:")
-        toggle_label.setStyleSheet("color: #ffffff;")
+        self.toggle_label = toggle_label
         toggle_layout.addWidget(toggle_label)
         
         initial_state = self.config_manager.get_system_logs_enabled()
@@ -232,7 +220,7 @@ class ConfigPanel(QWidget):
         toggle_layout.addStretch()
         
         toggle_note = QLabel("Changes require application restart")
-        toggle_note.setStyleSheet("color: #888888; font-style: italic;")
+        self.toggle_note = toggle_note
         toggle_layout.addWidget(toggle_note)
         
         toggle_group.setLayout(toggle_layout)
@@ -240,20 +228,7 @@ class ConfigPanel(QWidget):
         
         # Status Indicators Section
         status_group = QGroupBox("System Status")
-        status_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #444444;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
+        self.status_group = status_group
         status_layout = QGridLayout()
         status_layout.setSpacing(10)
         
@@ -285,12 +260,65 @@ class ConfigPanel(QWidget):
             "This panel shows the current configuration and system status. "
             "Only the system logs toggle can be modified. All other indicators are read-only."
         )
-        info_label.setStyleSheet("color: #666666; font-style: italic;")
+        self.info_label = info_label
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
         
         layout.addStretch()
         self.setLayout(layout)
+        self.apply_theme({
+            "window_bg": "#0a0a1a",
+            "text_primary": "#ffffff",
+            "text_secondary": "#888888",
+            "text_muted": "#666666",
+            "border": "#444444",
+            "warning_bg": "#FFC107",
+            "warning_text": "#000000",
+            "surface_bg": "#0f1629",
+        })
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the configuration page."""
+        self._theme = theme
+        self.setStyleSheet(f"background-color: {theme['window_bg']};")
+        self.title_label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.restart_warning.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme['warning_bg']};
+                border-radius: 5px;
+                padding: 10px;
+            }}
+        """)
+        self.warning_text.setStyleSheet(f"color: {theme['warning_text']}; font-weight: bold;")
+        group_style = f"""
+            QGroupBox {{
+                color: {theme['text_primary']};
+                font-weight: bold;
+                border: 1px solid {theme['border']};
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: {theme['surface_bg']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }}
+        """
+        self.toggle_group.setStyleSheet(group_style)
+        self.status_group.setStyleSheet(group_style)
+        self.toggle_label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.toggle_note.setStyleSheet(f"color: {theme['text_secondary']}; font-style: italic;")
+        self.info_label.setStyleSheet(f"color: {theme['text_muted']}; font-style: italic;")
+        for indicator in [
+            self.logs_indicator,
+            self.os_indicator,
+            self.perm_indicator,
+            self.kill_indicator,
+            self.ingestion_indicator,
+        ]:
+            indicator.apply_theme(theme)
     
     def _on_toggle_changed(self, new_state: bool):
         """Handle toggle state change"""

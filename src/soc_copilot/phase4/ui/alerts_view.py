@@ -19,6 +19,7 @@ class AlertsView(QWidget):
         self._alert_cache = {}  # batch_id -> alert data
         self._current_filter = "All"
         self._search_text = ""
+        self._theme = None
         self._init_ui()
         
         # Fast refresh for real-time feel
@@ -76,10 +77,9 @@ class AlertsView(QWidget):
         title_layout = QVBoxLayout()
         title = QLabel("🚨 Alerts")
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        title.setStyleSheet("color: #ffffff;")
+        self.title_label = title
         
         self.counter_label = QLabel("Loading...")
-        self.counter_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         title_layout.addWidget(title)
         title_layout.addWidget(self.counter_label)
@@ -89,65 +89,74 @@ class AlertsView(QWidget):
         
         # Priority filter
         filter_label = QLabel("Filter:")
-        filter_label.setStyleSheet("color: #888888; font-size: 12px;")
+        self.filter_label = filter_label
         header.addWidget(filter_label)
         
         self.priority_filter = QComboBox()
         self.priority_filter.addItems(["All", "Critical", "High", "Medium", "Low"])
-        self.priority_filter.setStyleSheet("""
-            QComboBox {
-                background-color: #1a2744;
-                color: #ffffff;
-                border: 1px solid #2a3f5f;
-                border-radius: 4px;
-                padding: 5px 10px;
-                min-width: 100px;
-            }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView {
-                background-color: #1a2744;
-                color: #ffffff;
-                selection-background-color: #00d4ff;
-                selection-color: #0a0a1a;
-            }
-        """)
         self.priority_filter.currentTextChanged.connect(self._on_filter_changed)
         header.addWidget(self.priority_filter)
         
         # Search box
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search...")
-        self.search_box.setStyleSheet("""
-            QLineEdit {
-                background-color: #1a2744;
-                color: #ffffff;
-                border: 1px solid #2a3f5f;
-                border-radius: 4px;
-                padding: 5px 10px;
-                min-width: 150px;
-            }
-        """)
         self.search_box.textChanged.connect(self._on_search_changed)
         header.addWidget(self.search_box)
         
         # Refresh button
-        refresh_btn = QPushButton("🔄")
-        refresh_btn.setToolTip("Refresh alerts")
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1a2744;
-                color: #ffffff;
-                border: 1px solid #2a3f5f;
+        self.refresh_btn = QPushButton("🔄")
+        self.refresh_btn.setToolTip("Refresh alerts")
+        self.refresh_btn.clicked.connect(self.refresh)
+        header.addWidget(self.refresh_btn)
+        
+        return header
+
+    def apply_theme(self, theme: dict):
+        """Apply theme colors to the alerts page."""
+        self._theme = theme
+        self.setStyleSheet(f"background-color: {theme['window_bg']};")
+        self.title_label.setStyleSheet(f"color: {theme['text_primary']};")
+        self.counter_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 11px;")
+        self.filter_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 12px;")
+        self.priority_filter.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {theme['input_bg']};
+                color: {theme['text_primary']};
+                border: 1px solid {theme['input_border']};
+                border-radius: 4px;
+                padding: 5px 10px;
+                min-width: 100px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{
+                background-color: {theme['input_bg']};
+                color: {theme['text_primary']};
+                selection-background-color: {theme['selection_bg']};
+                selection-color: {theme['selection_fg']};
+            }}
+        """)
+        self.search_box.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {theme['input_bg']};
+                color: {theme['text_primary']};
+                border: 1px solid {theme['input_border']};
+                border-radius: 4px;
+                padding: 5px 10px;
+                min-width: 150px;
+            }}
+        """)
+        self.refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme['button_bg']};
+                color: {theme['button_fg']};
+                border: 1px solid {theme['border_strong']};
                 border-radius: 4px;
                 padding: 5px 10px;
                 font-size: 14px;
-            }
-            QPushButton:hover { background-color: #2a3f5f; }
+            }}
+            QPushButton:hover {{ background-color: {theme['button_hover']}; }}
         """)
-        refresh_btn.clicked.connect(self.refresh)
-        header.addWidget(refresh_btn)
-        
-        return header
+        self.empty_label.setStyleSheet(f"color: {theme['text_secondary']}; font-style: italic; padding: 20px;")
     
     def refresh(self):
         """Full refresh - rebuild cache and table"""

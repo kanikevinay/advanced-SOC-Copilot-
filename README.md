@@ -247,6 +247,56 @@ Launch the full-featured desktop interface:
 python launch_ui.py
 ```
 
+### Windows: Reliable Launch (Recommended)
+
+Run from the project root folder (the folder that contains launch_ui.py).
+
+```powershell
+cd D:\soc\project\SOC-Copilot
+D:\soc\project\SOC-Copilot\venv\Scripts\python.exe launch_ui.py
+```
+
+If you want Windows Event Log live ingestion with admin privileges:
+
+```powershell
+cd D:\soc\project\SOC-Copilot
+D:\soc\project\SOC-Copilot\venv\Scripts\python.exe launch_ui.py --elevate
+```
+
+Notes:
+- `launch_ui.py` now runs normally without forced UAC prompts.
+- Use `--elevate` only when you explicitly want admin mode.
+
+### Desktop Launcher (Windows)
+
+Project includes a double-click launcher:
+
+- [Launch_SOC_Copilot.bat](Launch_SOC_Copilot.bat)
+- [Launch_SOC_Copilot.vbs](Launch_SOC_Copilot.vbs) (recommended for Desktop shortcut; opens without a visible console window)
+
+To install a desktop shortcut automatically:
+
+```powershell
+cd D:\soc\project\SOC-Copilot
+powershell -ExecutionPolicy Bypass -File .\install_desktop_launcher.ps1
+```
+
+Then use the shortcut named **SOC Copilot** from Desktop.
+
+If the Desktop shortcut ever needs to be refreshed after updates, run:
+
+```powershell
+cd D:\soc\project\SOC-Copilot
+powershell -ExecutionPolicy Bypass -File .\install_desktop_launcher.ps1
+```
+
+If you want to launch the project directly from Terminal, use:
+
+```powershell
+cd D:\soc\project\SOC-Copilot
+D:\soc\project\SOC-Copilot\venv\Scripts\python.exe launch_ui.py
+```
+
 The application opens with a **splash screen** → **main window** containing:
 
 #### Dashboard Tab

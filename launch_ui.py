@@ -273,11 +273,21 @@ def request_admin_elevation():
     print("\nRequesting administrator privileges for system log access...")
     try:
         script = os.path.abspath(sys.argv[0])
-        params = " ".join(sys.argv[1:])
-        ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, f'"{script}" {params}', None, 1
+        # Remove elevation flag to avoid recursion in the elevated process
+        args = [a for a in sys.argv[1:] if a != "--elevate"]
+        params = " ".join(args)
+        workdir = str(Path(script).parent)
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, f'"{script}" {params}', workdir, 1
         )
-        sys.exit(0)  # Exit current non-elevated process
+
+        # ShellExecuteW returns a value > 32 on success.
+        # If elevation is cancelled/denied, continue in the current process
+        # with file-based ingestion instead of exiting silently.
+        if int(result) > 32:
+            sys.exit(0)  # Elevated process started; close current process
+
+        print("Elevation was not granted. Continuing without system log access.")
     except Exception as e:
         print(f"Elevation failed: {e}")
         print("Continuing without system log access.")
@@ -366,11 +376,14 @@ def start_system_log_ingestion(controller, kill_switch, project_root: Path):
 
 
 if __name__ == "__main__":
-    # Auto-request admin if not elevated — needed for Windows Event Log access
-    if sys.platform == "win32" and not is_admin():
-        print("SOC Copilot needs administrator rights to read Windows Event Logs.")
-        print("Requesting elevation...")
+    # Elevation is opt-in. This avoids blink/exit loops when launched from a terminal.
+    # Use: python launch_ui.py --elevate
+    if sys.platform == "win32" and "--elevate" in sys.argv and not is_admin():
+        print("Requesting elevation (--elevate).")
         request_admin_elevation()
-        # If we reach here, elevation was declined — continue without system log access
+        # If we reach here, elevation was declined/failed — continue with file-based analysis.
         print("Continuing without system log access (file-based analysis still works).\n")
+
+    if sys.platform == "win32" and not is_admin() and "--elevate" not in sys.argv:
+        print("Tip: Running without admin. Use '--elevate' for live Windows Event Logs.")
     main()

@@ -4,7 +4,9 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 import threading
+import uuid
 from ..controller import AppController, AnalysisResult
+from ..controller.schemas import AlertSummary, PipelineStats
 
 
 class ControllerBridge:
@@ -15,6 +17,8 @@ class ControllerBridge:
         self._permission_status = None
         self._sources_added = 0
         self._process_lock = threading.Lock()  # Serialize pipeline access
+        self._manual_results: List[AnalysisResult] = []
+        self._manual_lock = threading.Lock()
         self._check_permissions()
     
     def _check_permissions(self):
@@ -41,11 +45,23 @@ class ControllerBridge:
     
     def get_latest_alerts(self, limit: int = 50) -> List[AnalysisResult]:
         """Get latest analysis results (read-only)"""
-        return self._controller.get_results(limit=limit)
+        base_results = self._controller.get_results(limit=limit)
+        with self._manual_lock:
+            manual_results = list(self._manual_results)
+        merged = base_results + manual_results
+        merged.sort(key=lambda r: r.timestamp, reverse=True)
+        return merged[:limit]
     
     def get_alert_by_id(self, batch_id: str) -> Optional[AnalysisResult]:
         """Get specific result by ID (read-only)"""
-        return self._controller.get_result_by_id(batch_id)
+        result = self._controller.get_result_by_id(batch_id)
+        if result is not None:
+            return result
+        with self._manual_lock:
+            for item in reversed(self._manual_results):
+                if item.batch_id == batch_id:
+                    return item
+        return None
     
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive controller statistics (read-only)"""
@@ -176,4 +192,52 @@ class ControllerBridge:
     def start_ingestion(self):
         """Placeholder for ingestion start (files are processed immediately)"""
         pass
+
+    def create_manual_alert(
+        self,
+        raw_log: str,
+        classification: str = "ManualEscalation",
+        priority: str = "P2-High",
+        source_ip: str = "N/A",
+    ) -> bool:
+        """Create a manual alert entry from a selected log row."""
+        try:
+            now = datetime.now()
+            alert = AlertSummary(
+                alert_id=f"MANUAL-{uuid.uuid4().hex[:8]}",
+                priority=priority,
+                classification=classification,
+                confidence=1.0,
+                anomaly_score=1.0,
+                risk_score=1.0,
+                source_ip=source_ip if source_ip and source_ip != "N/A" else None,
+                destination_ip=None,
+                timestamp=now,
+                reasoning=f"Manual alert created by analyst from log: {raw_log[:300]}",
+                suggested_action="Investigate this event and correlate with recent activity",
+            )
+
+            stats = PipelineStats(
+                total_records=1,
+                processed_records=1,
+                alerts_generated=1,
+                risk_distribution={"P2-High": 1},
+                classification_distribution={classification: 1},
+                processing_time=0.0,
+            )
+
+            manual_result = AnalysisResult(
+                batch_id=f"manual-{uuid.uuid4().hex[:10]}",
+                timestamp=now,
+                alerts=[alert],
+                stats=stats,
+                raw_count=1,
+            )
+
+            with self._manual_lock:
+                self._manual_results.append(manual_result)
+                self._manual_results = self._manual_results[-500:]
+            return True
+        except Exception:
+            return False
 
