@@ -101,7 +101,9 @@ def validate_path(
         for base_dir in allowed_base_dirs:
             try:
                 resolved_base = base_dir.resolve()
-                if str(resolved).startswith(str(resolved_base)):
+                # Use is_relative_to() instead of startswith() — the latter allows
+                # paths like /data/models_evil to bypass a /data/models base check
+                if resolved.is_relative_to(resolved_base):
                     in_allowed = True
                     break
             except (OSError, ValueError):

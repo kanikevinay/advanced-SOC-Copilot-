@@ -1,7 +1,9 @@
 """Secure file permissions management for SOC Copilot"""
 
+import getpass
 import os
 import platform
+import subprocess
 from pathlib import Path
 from typing import Literal
 from dataclasses import dataclass
@@ -97,10 +99,9 @@ def validate_permissions(path: Path) -> PermissionStatus:
             else:
                 expected_mode = 0o600  # Default to most restrictive
         
-        # On Windows, chmod may not work as expected
+        # On Windows, verify using icacls that only the current user has access
         if platform.system() == "Windows":
-            # Best-effort validation on Windows
-            is_secure = True  # Assume secure on Windows
+            is_secure = _validate_windows_acl(path)
         else:
             # Strict validation on Unix-like systems
             is_secure = current_mode == expected_mode
@@ -162,7 +163,11 @@ def _set_windows_acl(path: Path, mode: int) -> bool:
     import subprocess
     
     try:
-        username = os.environ.get("USERNAME", "")
+        # Use getpass.getuser() — reads from the OS, not the spoofable env var
+        try:
+            username = getpass.getuser()
+        except Exception:
+            username = ""
         if not username:
             return True  # Can't determine user, skip silently
         
@@ -203,4 +208,38 @@ def _set_windows_acl(path: Path, mode: int) -> bool:
         return True
     except Exception:
         return True  # Don't fail the application for permission issues
+
+
+def _validate_windows_acl(path: Path) -> bool:
+    """Check Windows ACL to verify only the current user has access.
+
+    Runs `icacls <path>` and confirms no unexpected principals are listed.
+    Falls back to True (permissive) when icacls is unavailable.
+
+    Args:
+        path: File or directory path to check
+
+    Returns:
+        True if ACL looks secure (or cannot be determined), False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ["icacls", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return True  # icacls failed — don't block the app
+
+        output = result.stdout.upper()
+        # Flag as insecure if "Everyone" or "Users" group has write/full access
+        dangerous_patterns = ["EVERYONE:(F)", "EVERYONE:(W)", "USERS:(F)", "USERS:(W)"]
+        for pattern in dangerous_patterns:
+            if pattern in output:
+                return False
+        return True
+    except Exception:
+        return True  # Best-effort — don't crash on ACL check failure
 

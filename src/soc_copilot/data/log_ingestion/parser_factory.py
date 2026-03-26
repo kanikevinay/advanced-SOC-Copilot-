@@ -10,6 +10,7 @@ from soc_copilot.data.log_ingestion.parsers.json_parser import JSONParser
 from soc_copilot.data.log_ingestion.parsers.csv_parser import CSVParser
 from soc_copilot.data.log_ingestion.parsers.syslog_parser import SyslogParser
 from soc_copilot.data.log_ingestion.parsers.evtx_parser import EVTXParser
+from soc_copilot.data.log_ingestion.parsers.text_log_parser import TextLogParser
 
 
 class ParserFactory:
@@ -55,6 +56,11 @@ class ParserFactory:
         evtx_parser = EVTXParser()
         for ext in evtx_parser.supported_extensions:
             self._parsers[ext.lower()] = evtx_parser
+        
+        # Text log parser (custom key-value format)
+        text_parser = TextLogParser()
+        for ext in text_parser.supported_extensions:
+            self._parsers[ext.lower()] = text_parser
     
     def register_parser(self, extension: str, parser: BaseParser) -> None:
         """Register a custom parser for an extension.

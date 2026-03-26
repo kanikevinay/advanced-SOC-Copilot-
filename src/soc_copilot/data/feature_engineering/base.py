@@ -118,16 +118,19 @@ class BaseFeatureExtractor(ABC):
     def _validate_output(self, df: pd.DataFrame) -> None:
         """Validate that output features are numeric.
         
+        Logs a warning for non-numeric features; does not raise.
+        The feature engineering pipeline's postprocessing will
+        cast all feature columns to float64 after extraction.
+        
         Args:
             df: Output DataFrame to validate
-            
-        Raises:
-            ValueError: If non-numeric features found
         """
         for col in df.columns:
-            if not np.issubdtype(df[col].dtype, np.number):
-                raise ValueError(
-                    f"Feature {col} is not numeric: {df[col].dtype}"
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                logger.warning(
+                    "non_numeric_feature_detected",
+                    column=col,
+                    dtype=str(df[col].dtype),
                 )
 
 

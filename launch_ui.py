@@ -6,6 +6,11 @@ import ctypes
 import subprocess
 from pathlib import Path
 
+# Configure VirusTotal API key
+VT_API_KEY = "68e10ee812e35869a5fd8f9f78561dbddc09276f34cae8506c66bdd42b1967fc"
+if VT_API_KEY:
+    os.environ["VT_API_KEY"] = VT_API_KEY
+
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root / "src"))
@@ -33,8 +38,8 @@ def check_required_permissions(project_root: Path) -> bool:
             print(f"Details: {e}")
             print("\nRemediation:")
             if sys.platform == "win32":
-                print("  - Run as Administrator, or")
-                print("  - Change directory permissions")
+                print("  - Change directory permissions (right-click folder > Properties > Security), or")
+                print("  - Run as Administrator only if you cannot change folder permissions")
             else:
                 print(f"  - Run: chmod -R u+w {dir_path}")
             return False

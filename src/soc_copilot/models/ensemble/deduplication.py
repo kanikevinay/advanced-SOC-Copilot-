@@ -81,9 +81,9 @@ class EventDeduplicator:
         score_bucket = int(anomaly_score * 10) / 10  # e.g. 0.08 → 0.0, 0.85 → 0.8
 
         parts = [
-            classification,
+            str(classification),
             f"{score_bucket:.1f}",
-            source_ip or "unknown",
+            str(source_ip) if source_ip is not None else "unknown",
         ]
 
         fingerprint_str = "|".join(parts)

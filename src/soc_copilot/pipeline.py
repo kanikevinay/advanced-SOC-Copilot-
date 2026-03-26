@@ -178,8 +178,10 @@ class SOCCopilot:
             df.loc[i, "_line_number"] = getattr(record, "line_number", i)
 
         # Preprocessing
+        # PreprocessingPipeline expects list[dict], not a DataFrame
         try:
-            df_pre = self._preprocessing.fit_transform(df)
+            records_list = df.to_dict(orient="records")
+            df_pre = self._preprocessing.fit_transform(records_list)
         except Exception as e:
             logger.error("preprocessing_failed", error=str(e))
             df_pre = df.copy()

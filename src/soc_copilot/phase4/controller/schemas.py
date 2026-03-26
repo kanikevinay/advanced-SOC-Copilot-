@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import datetime
 
+# Import VT info schema from integrations
+from soc_copilot.integrations import VTIPInfo
+
 
 @dataclass
 class AlertSummary:
@@ -40,3 +43,6 @@ class AnalysisResult:
     alerts: List[AlertSummary]
     stats: PipelineStats
     raw_count: int
+    raw_logs: List[str] = field(default_factory=list)
+    session_id: Optional[str] = None  # Track which upload session this batch belongs to
+    vt_results: Dict[str, VTIPInfo] = field(default_factory=dict)  # Cache of VT lookups by IP

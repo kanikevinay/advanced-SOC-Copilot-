@@ -1,0 +1,11 @@
+=== End-to-End VT Integration Test ===
+
+[PASS] Step 1: Initialized controller and bridge
+
+[FAILED] Error: object of type 'bool' has no len()
+Traceback (most recent call last):
+  File "D:\soc\project\SOC-Copilot\test_vt_integration.py", line 25, in <module>
+    output.append('[PASS] Step 2: Uploaded %d records from test file' % len(records))
+                                                                        ~~~^^^^^^^^^
+TypeError: object of type 'bool' has no len()
+

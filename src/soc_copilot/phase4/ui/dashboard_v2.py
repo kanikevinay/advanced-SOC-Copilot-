@@ -70,7 +70,7 @@ class ThreatBanner(QFrame):
     
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(80)
+        self.setFixedHeight(92)
         self._theme = None
         self._current_level = "normal"
         self._critical_count = 0
@@ -79,20 +79,21 @@ class ThreatBanner(QFrame):
     
     def _init_ui(self):
         layout = QHBoxLayout()
-        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setContentsMargins(22, 14, 22, 14)
+        layout.setSpacing(14)
         
         self.icon_label = QLabel("✅")
-        self.icon_label.setFont(QFont("Segoe UI Emoji", 32))
+        self.icon_label.setFont(QFont("Segoe UI Emoji", 28))
         layout.addWidget(self.icon_label)
         
         text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
+        text_layout.setSpacing(1)
         
         self.level_label = QLabel("NORMAL")
-        self.level_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        self.level_label.setFont(QFont("Segoe UI", 19, QFont.Weight.Bold))
         
         self.detail_label = QLabel("No critical threats detected")
-        self.detail_label.setFont(QFont("Segoe UI", 11))
+        self.detail_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Medium))
         
         text_layout.addWidget(self.level_label)
         text_layout.addWidget(self.detail_label)
@@ -106,12 +107,38 @@ class ThreatBanner(QFrame):
     
     def set_level(self, level: str, critical: int, high: int):
         """Update threat level"""
+        theme = self._theme or {}
         levels = {
-            "loading": ("#16213e", "#888888", "⏳", "LOADING"),
-            "critical": ("#4a0000", "#ff4444", "🚨", "CRITICAL"),
-            "high": ("#4a2000", "#ff8800", "⚠️", "HIGH"),
-            "elevated": ("#4a4000", "#ffaa00", "⚡", "ELEVATED"),
-            "normal": ("#004a2a", "#4CAF50", "●", "NORMAL")
+            "loading": (
+                theme.get("panel_bg", "#16213e"),
+                theme.get("text_secondary", "#888888"),
+                "⏳",
+                "LOADING",
+            ),
+            "critical": (
+                theme.get("critical_bg", "#4a0000"),
+                theme.get("critical_text", "#ff4444"),
+                "🚨",
+                "CRITICAL",
+            ),
+            "high": (
+                theme.get("warning_bg", "#4a2000"),
+                theme.get("warning_text", "#ff8800"),
+                "⚠️",
+                "HIGH",
+            ),
+            "elevated": (
+                theme.get("warning_bg", "#4a4000"),
+                theme.get("warning_text", "#ffaa00"),
+                "⚡",
+                "ELEVATED",
+            ),
+            "normal": (
+                theme.get("success_bg", "#004a2a"),
+                theme.get("success_text", "#4CAF50"),
+                "●",
+                "NORMAL",
+            ),
         }
         
         bg, fg, icon, text = levels.get(level, levels["normal"])
@@ -121,9 +148,11 @@ class ThreatBanner(QFrame):
         
         self.setStyleSheet(f"""
             QFrame {{
-                background-color: {bg};
+                background-color: {theme.get('surface_bg', '#0f1629')};
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {bg}, stop:1 {theme.get('surface_bg', '#0f1629')});
                 border: 2px solid {fg};
-                border-radius: 10px;
+                border-radius: 12px;
             }}
         """)
         
@@ -143,7 +172,9 @@ class ThreatBanner(QFrame):
     def apply_theme(self, theme: dict):
         """Apply theme colors to the banner's secondary text."""
         self._theme = theme
-        self.detail_label.setStyleSheet(f"color: {theme['text_secondary']};")
+        self.detail_label.setStyleSheet(
+            f"color: {theme['text_secondary']}; font-size: 12px; font-weight: 500;"
+        )
         self.set_level(self._current_level, self._critical_count, self._high_count)
 
 
@@ -239,14 +270,14 @@ class MetricCard(QFrame):
         self.title = title
         self.color = color
         self._theme = None
-        self.setFixedHeight(90)
+        self.setFixedHeight(94)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._init_ui(title, icon, color)
     
     def _init_ui(self, title: str, icon: str, color: str):
         layout = QVBoxLayout()
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(5)
+        layout.setContentsMargins(15, 9, 15, 10)
+        layout.setSpacing(4)
         
         header = QHBoxLayout()
         icon_lbl = QLabel(icon)
@@ -260,7 +291,7 @@ class MetricCard(QFrame):
         header.addStretch()
         
         self.value_label = QLabel("0")
-        self.value_label.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        self.value_label.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
         
         layout.addLayout(header)
         layout.addWidget(self.value_label)
@@ -283,7 +314,7 @@ class MetricCard(QFrame):
             QFrame {{
                 background-color: {theme['panel_bg']};
                 border-left: 4px solid {self.color};
-                border-radius: 6px;
+                border-radius: 8px;
             }}
             QFrame:hover {{
                 background-color: {theme['panel_hover']};
@@ -382,8 +413,8 @@ class QuickActionsBar(QFrame):
                 background-color: {theme['accent']};
                 color: {theme['accent_fg']};
                 border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
+                padding: 12px 22px;
+                border-radius: 8px;
                 font-weight: bold;
                 font-size: 13px;
             }}
@@ -395,8 +426,8 @@ class QuickActionsBar(QFrame):
                 background-color: {theme['button_bg']};
                 color: {theme['button_fg']};
                 border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
+                padding: 12px 22px;
+                border-radius: 8px;
                 font-size: 13px;
             }}
             QPushButton:hover {{ background-color: {theme['button_hover']}; }}
@@ -506,6 +537,9 @@ class RecentAlertsTimeline(QFrame):
     def apply_theme(self, theme: dict):
         """Apply theme colors to the recent alerts panel."""
         self._theme = theme
+        selection_bg = theme.get("selection_bg", "#cfe5ff")
+        selection_fg = theme.get("selection_fg", theme.get("text_primary", "#132033"))
+        status_bg = theme.get("status_bg", theme.get("panel_bg", "#e7eefc"))
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {theme['surface_bg']};
@@ -516,16 +550,39 @@ class RecentAlertsTimeline(QFrame):
         self.title_label.setStyleSheet(f"color: {theme['text_primary']};")
         self.count_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 11px;")
         self.empty_label.setStyleSheet(f"color: {theme['text_muted']}; padding: 40px;")
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {theme['surface_bg']};
+                color: {theme['text_primary']};
+                border: 1px solid {theme['border']};
+                gridline-color: {theme['border']};
+                selection-background-color: {selection_bg};
+                selection-color: {selection_fg};
+            }}
+            QHeaderView::section {{
+                background-color: {status_bg};
+                color: {theme['text_primary']};
+                border: none;
+                padding: 6px;
+                font-weight: bold;
+            }}
+        """)
 
     def _get_priority_color(self, priority: str) -> QColor:
         p = priority.lower()
+        if self._theme is None:
+            self._theme = {
+                "critical_text": "#ff4444",
+                "warning_text": "#ff8800",
+                "text_secondary": "#888888",
+            }
         if "critical" in p:
-            return QColor("#ff4444")
+            return QColor(self._theme["critical_text"])
         elif "high" in p:
-            return QColor("#ff8800")
+            return QColor(self._theme["warning_text"])
         elif "medium" in p:
-            return QColor("#ffaa00")
-        return QColor("#ffffff")
+            return QColor(self._theme["warning_text"])
+        return QColor(self._theme["text_secondary"])
 
     def _on_row_clicked(self, item):
         row = item.row()
@@ -606,6 +663,9 @@ class LiveAlertDashboard(QFrame):
     def apply_theme(self, theme: dict):
         """Apply theme colors to the live alert dashboard."""
         self._theme = theme
+        selection_bg = theme.get("selection_bg", "#cfe5ff")
+        selection_fg = theme.get("selection_fg", theme.get("text_primary", "#132033"))
+        status_bg = theme.get("status_bg", theme.get("panel_bg", "#e7eefc"))
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {theme['surface_bg']};
@@ -618,6 +678,23 @@ class LiveAlertDashboard(QFrame):
         self.high_summary.setStyleSheet(f"color: {theme['warning_text']};")
         self.latest_summary.setStyleSheet(f"color: {theme['text_secondary']};")
         self.empty_label.setStyleSheet(f"color: {theme['text_muted']}; padding: 20px;")
+        self.feed_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {theme['surface_bg']};
+                color: {theme['text_primary']};
+                border: 1px solid {theme['border']};
+                gridline-color: {theme['border']};
+                selection-background-color: {selection_bg};
+                selection-color: {selection_fg};
+            }}
+            QHeaderView::section {{
+                background-color: {status_bg};
+                color: {theme['text_primary']};
+                border: none;
+                padding: 6px;
+                font-weight: bold;
+            }}
+        """)
 
     def update_alerts(self, alerts_data: list):
         """Update the live feed with critical alerts first, then high alerts."""

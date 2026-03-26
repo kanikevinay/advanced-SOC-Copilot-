@@ -7,6 +7,7 @@ import threading
 import uuid
 from ..controller import AppController, AnalysisResult
 from ..controller.schemas import AlertSummary, PipelineStats
+from soc_copilot.integrations import VTIPInfo
 
 
 class ControllerBridge:
@@ -46,6 +47,8 @@ class ControllerBridge:
     def get_latest_alerts(self, limit: int = 50) -> List[AnalysisResult]:
         """Get latest analysis results (read-only)"""
         base_results = self._controller.get_results(limit=limit)
+        if not isinstance(base_results, list):
+            base_results = []
         with self._manual_lock:
             manual_results = list(self._manual_results)
         merged = base_results + manual_results
@@ -66,6 +69,8 @@ class ControllerBridge:
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive controller statistics (read-only)"""
         base_stats = self._controller.get_stats()
+        if not isinstance(base_stats, dict):
+            base_stats = {}
         
         # Enhance with additional status info
         enhanced_stats = {
@@ -192,6 +197,42 @@ class ControllerBridge:
     def start_ingestion(self):
         """Placeholder for ingestion start (files are processed immediately)"""
         pass
+
+    def clear_all_results(self) -> None:
+        """Clear all stored results (all sessions)."""
+        self._controller.result_store.clear_all_sessions()
+        with self._manual_lock:
+            self._manual_results.clear()
+
+    def clear_current_batch(self) -> int:
+        """Clear only current batch/session results. Returns count removed."""
+        removed = self._controller.result_store.clear_current_batch()
+        with self._manual_lock:
+            self._manual_results.clear()
+        return removed
+
+    def get_vt_info(self, ip: str) -> Optional[VTIPInfo]:
+        """Get VirusTotal info for an IP address"""
+        # Check all results for cached VT info
+        for result in self._controller.get_results(limit=1000):
+            if ip in result.vt_results:
+                return result.vt_results[ip]
+        
+        # If not in cache, do a lookup
+        return self._controller._vt_client.lookup_ip(ip)
+    
+    def get_all_source_ips(self) -> List[tuple]:
+        """Get all discovered source IPs with their risk levels. Returns list of (ip, risk_level)"""
+        ips_with_risk = []
+        seen_ips = set()
+        
+        for result in self._controller.get_results(limit=1000):
+            for ip, vt_info in result.vt_results.items():
+                if ip not in seen_ips:
+                    ips_with_risk.append((ip, vt_info.risk_level, vt_info))
+                    seen_ips.add(ip)
+        
+        return ips_with_risk
 
     def create_manual_alert(
         self,

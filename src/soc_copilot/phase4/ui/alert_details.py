@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
+from .vt_details_modal import VTDetailsModal
 
 
 class DetailField(QFrame):
@@ -206,11 +207,42 @@ class AlertDetailsPanel(QWidget):
                 network_section.setSpacing(10)
                 
                 if alert.source_ip:
-                    network_section.addWidget(DetailField(
-                        "SOURCE IP",
-                        alert.source_ip,
-                        "#00d4ff"
-                    ))
+                    # Make source IP clickable for VT lookup
+                    src_ip_btn = QPushButton(alert.source_ip)
+                    src_ip_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: transparent;
+                            color: #00d4ff;
+                            border: none;
+                            text-decoration: underline;
+                            font-size: 13px;
+                            padding: 0px;
+                        }
+                        QPushButton:hover {
+                            color: #00ffff;
+                        }
+                    """)
+                    src_ip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    src_ip_btn.clicked.connect(lambda: self._show_vt_for_ip(alert.source_ip))
+                    
+                    src_frame = QFrame()
+                    src_frame.setStyleSheet("""
+                        QFrame {
+                            background-color: #16213e;
+                            border: 1px solid #1a2744;
+                            border-radius: 6px;
+                            padding: 8px;
+                        }
+                    """)
+                    src_layout = QVBoxLayout()
+                    src_layout.setContentsMargins(10, 8, 10, 8)
+                    src_layout.setSpacing(4)
+                    src_label = QLabel("SOURCE IP (click for VirusTotal info)")
+                    src_label.setStyleSheet("color: #888888; font-size: 10px; font-weight: bold;")
+                    src_layout.addWidget(src_label)
+                    src_layout.addWidget(src_ip_btn)
+                    src_frame.setLayout(src_layout)
+                    network_section.addWidget(src_frame)
                 
                 if alert.destination_ip:
                     network_section.addWidget(DetailField(
@@ -298,6 +330,17 @@ class AlertDetailsPanel(QWidget):
         
         content_frame.setLayout(content_layout)
         self.details_layout.addWidget(content_frame)
+    
+    def _show_vt_for_ip(self, ip: str):
+        """Show VirusTotal details modal for IP"""
+        try:
+            vt_info = self.bridge.get_vt_info(ip)
+            if vt_info:
+                modal = VTDetailsModal(ip, vt_info, parent=self)
+                modal.exec()
+        except Exception as e:
+            # Gracefully handle VT lookup errors
+            pass
     
     def _show_error(self, error: str):
         """Show error state"""

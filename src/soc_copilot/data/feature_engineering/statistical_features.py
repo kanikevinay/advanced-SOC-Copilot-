@@ -199,9 +199,10 @@ class StatisticalFeatureExtractor(BaseFeatureExtractor):
         prefix = self.config.feature_prefix
         entity_field = self.config.entity_field
         
-        # Initialize feature columns
+        # Initialize feature columns as float64 to avoid dtype conflicts
+        # when float values are assigned to int-initialized columns
         for feat_def in self.feature_definitions:
-            result[feat_def.name] = feat_def.default_value
+            result[feat_def.name] = float(feat_def.default_value)
         
         if entity_field not in result.columns:
             logger.warning(

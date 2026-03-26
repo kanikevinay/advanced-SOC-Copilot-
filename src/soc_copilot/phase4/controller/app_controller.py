@@ -2,11 +2,13 @@
 
 import time
 import uuid
+import re
 from datetime import datetime
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Set
 from pathlib import Path
 
 from soc_copilot.pipeline import create_soc_copilot
+from soc_copilot.integrations import get_vt_client
 from .schemas import AnalysisResult, AlertSummary, PipelineStats
 from .result_store import ResultStore
 
@@ -28,6 +30,9 @@ class AppController:
         self._sources_count = 0
         self._dropped_count = 0
         self._batches_processed = 0
+        self._vt_client = get_vt_client()
+        self._current_session_id = str(uuid.uuid4())
+        self.result_store.set_session_id(self._current_session_id)
     
     def initialize(self):
         """Initialize analysis pipelines (network-flow ML + text log ML)"""
@@ -66,7 +71,7 @@ class AppController:
         # Measure processing time
         start_time = time.time()
         
-        # Run text log ML detection (falls back to rules if model unavailable)
+        # Run text log detection (ML + deterministic rules)
         text_log_alerts = self._text_log_ml_detect(raw_lines)
         
         # Analyze batch (using existing ML pipeline)
@@ -104,13 +109,39 @@ class AppController:
             timestamp=datetime.now(),
             alerts=alert_summaries,
             stats=pipeline_stats,
-            raw_count=len(raw_lines)
+            raw_count=len(raw_lines),
+            raw_logs=raw_lines,
+            session_id=self._current_session_id,
         )
+        
+        # VirusTotal lookups are done on-demand from the Investigation view.
+        # Running per-IP lookups during upload can block processing because
+        # free-tier VT rate limits are strict.
         
         # Store result
         self.result_store.add(result)
         
         return result
+    
+    def _extract_source_ips(self, alerts: List[AlertSummary], raw_lines: List[str]) -> Set[str]:
+        """Extract unique source IPs from alerts and raw log lines"""
+        ips = set()
+        
+        # From alerts
+        for alert in alerts:
+            if alert.source_ip:
+                ips.add(alert.source_ip)
+        
+        # From raw logs using regex pattern IPv4
+        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+        for line in raw_lines:
+            matches = re.findall(ip_pattern, line)
+            for ip in matches:
+                # Basic validation (not 255.255.255.255 or 0.0.0.0)
+                if ip not in ('255.255.255.255', '0.0.0.0'):
+                    ips.add(ip)
+        
+        return ips
     
     # ------------------------------------------------------------------
     # Text Log ML Detection
@@ -156,11 +187,14 @@ class AppController:
         Returns:
             List of AlertSummary objects for detected threats
         """
-        # Fall back to rules if ML model not available
-        if self._text_log_classifier is None:
-            return self._rule_based_detect(lines)
-        
         alerts: List[AlertSummary] = []
+
+        # Always include deterministic rules so known patterns reliably trigger.
+        rule_alerts = self._rule_based_detect(lines)
+
+        # If ML model is not available, rely on rules only.
+        if self._text_log_classifier is None:
+            return rule_alerts
         
         for line in lines:
             parsed = self._parse_raw_log(line)
@@ -234,7 +268,23 @@ class AppController:
                 suggested_action=config["action"],
             ))
         
-        return alerts
+        # Merge ML and rule alerts with simple de-duplication by classification + src/dst.
+        merged = rule_alerts + alerts
+        deduped: List[AlertSummary] = []
+        seen = set()
+        for alert in merged:
+            key = (
+                alert.classification,
+                alert.priority,
+                alert.source_ip or "",
+                alert.destination_ip or "",
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(alert)
+
+        return deduped
     
     @staticmethod
     def _is_external_ip(ip: str) -> bool:
@@ -256,17 +306,26 @@ class AppController:
             List of AlertSummary objects for detected threats
         """
         alerts = []
-        
+        failed_streak_by_ip: dict[str, int] = {}
+
         for line in lines:
             parsed = self._parse_raw_log(line)
-            event_type = parsed.get("event_type", "")
+            event_type = (parsed.get("event_type", "") or "").strip()
+            event_type_key = event_type.lower()
             
             # Rule 1: Brute Force Detection
-            if event_type == "LoginAttempt":
-                attempts = parsed.get("login_attempts", 0)
+            if event_type_key in {"loginattempt", "userlogin", "login"}:
                 src_ip = parsed.get("src_ip", "")
                 user = parsed.get("user", "unknown")
                 is_external = self._is_external_ip(src_ip)
+                login_failed = parsed.get("login_failed", False)
+
+                if login_failed and src_ip:
+                    failed_streak_by_ip[src_ip] = failed_streak_by_ip.get(src_ip, 0) + 1
+                elif src_ip:
+                    failed_streak_by_ip[src_ip] = 0
+
+                attempts = max(parsed.get("login_attempts", 0), failed_streak_by_ip.get(src_ip, 0))
                 
                 if attempts >= 10 and is_external:
                     # Critical: high-volume brute force from external IP
@@ -306,9 +365,27 @@ class AppController:
                         ),
                         suggested_action="Investigate account and consider temporary lockout",
                     ))
+                elif 2 <= attempts <= 4:
+                    # Medium: early-stage suspicious login pattern
+                    alerts.append(AlertSummary(
+                        alert_id=f"RULE-LOGIN-{uuid.uuid4().hex[:8]}",
+                        priority="P3-Medium",
+                        classification="Suspicious",
+                        confidence=0.75,
+                        anomaly_score=0.55,
+                        risk_score=0.55,
+                        source_ip=src_ip or None,
+                        destination_ip=None,
+                        timestamp=datetime.now(),
+                        reasoning=(
+                            f"Suspicious login pattern: {attempts} failed logins "
+                            f"for user '{user}' from IP {src_ip}"
+                        ),
+                        suggested_action="Monitor account and enforce step-up authentication",
+                    ))
             
             # Rule 2: Malware Execution Detection
-            elif event_type == "FileExecution":
+            elif event_type_key in {"fileexecution", "file_execute"}:
                 host = parsed.get("host", "unknown")
                 action = parsed.get("action", "")
                 filename = action.replace("execute:", "") if action.startswith("execute:") else ""
@@ -331,7 +408,7 @@ class AppController:
                     ))
             
             # Rule 3: Data Exfiltration Detection
-            elif event_type == "DataTransfer":
+            elif event_type_key in {"datatransfer", "filetransfer", "transfer"}:
                 size_mb = parsed.get("data_size_mb", 0)
                 dst_ip = parsed.get("dst_ip", "")
                 host = parsed.get("host", "unknown")
@@ -361,6 +438,64 @@ class AppController:
                         ),
                         suggested_action="Block outbound connection, investigate data contents and authorization",
                     ))
+                elif 100 <= size_mb <= 400:
+                    # Medium: unusual but not extreme transfer volume
+                    alerts.append(AlertSummary(
+                        alert_id=f"RULE-DATA-{uuid.uuid4().hex[:8]}",
+                        priority="P3-Medium",
+                        classification="Suspicious",
+                        confidence=0.72,
+                        anomaly_score=0.52,
+                        risk_score=0.52,
+                        source_ip=parsed.get("src_ip") or None,
+                        destination_ip=dst_ip or None,
+                        timestamp=datetime.now(),
+                        reasoning=(
+                            f"Medium-risk transfer detected: {size_mb}MB "
+                            f"from {host} to {dst_ip or 'unknown destination'}"
+                        ),
+                        suggested_action="Review transfer context and validate business justification",
+                    ))
+
+            # Rule 4: Flood / DDoS Detection
+            elif event_type_key in {"networkflood", "ddos", "flood"}:
+                pps = int(parsed.get("packets_per_second", 0) or 0)
+                src_ip = parsed.get("src_ip", "")
+                dst_ip = parsed.get("dst_ip", "")
+
+                if pps >= 40000:
+                    alerts.append(AlertSummary(
+                        alert_id=f"RULE-DDOS-{uuid.uuid4().hex[:8]}",
+                        priority="P1-Critical",
+                        classification="DDoS",
+                        confidence=0.96,
+                        anomaly_score=0.96,
+                        risk_score=0.96,
+                        source_ip=src_ip or None,
+                        destination_ip=dst_ip or None,
+                        timestamp=datetime.now(),
+                        reasoning=(
+                            f"High-volume flood traffic detected ({pps} packets/sec) "
+                            f"from {src_ip or 'unknown source'} to {dst_ip or 'unknown destination'}"
+                        ),
+                        suggested_action="Enable DDoS mitigation controls and block malicious sources",
+                    ))
+                elif pps >= 10000:
+                    alerts.append(AlertSummary(
+                        alert_id=f"RULE-DDOS-{uuid.uuid4().hex[:8]}",
+                        priority="P2-High",
+                        classification="DDoS",
+                        confidence=0.84,
+                        anomaly_score=0.82,
+                        risk_score=0.82,
+                        source_ip=src_ip or None,
+                        destination_ip=dst_ip or None,
+                        timestamp=datetime.now(),
+                        reasoning=(
+                            f"Potential DDoS behavior: sustained flood rate of {pps} packets/sec"
+                        ),
+                        suggested_action="Monitor traffic spike and apply rate limiting",
+                    ))
         
         return alerts
     
@@ -372,6 +507,7 @@ class AppController:
         2026-01-18 02:49:12 FileExecution host=server-02 file=payload.exe
         2026-01-18 02:58:11 DataTransfer source=server-02 destination=185.220.101.45 size=3526MB
         """
+        import json
         import re
         
         entry = {
@@ -385,8 +521,85 @@ class AppController:
             "protocol": "TCP",
             "raw_log": line,
             "login_attempts": 0,
-            "data_size_mb": 0
+            "data_size_mb": 0,
+            "login_failed": False,
+            "packets_per_second": 0,
         }
+
+        # Parse JSON logs first (common uploaded format).
+        try:
+            payload = json.loads(line)
+            if isinstance(payload, dict):
+                status = str(payload.get("status", "")).lower()
+                action = str(payload.get("action", payload.get("event", ""))).lower()
+
+                entry["timestamp"] = str(payload.get("timestamp", ""))
+                entry["user"] = str(payload.get("username", payload.get("user", "")))
+                entry["src_ip"] = str(payload.get("src_ip", payload.get("source_ip", payload.get("ip", ""))))
+                entry["dst_ip"] = str(payload.get("dst_ip", payload.get("destination_ip", payload.get("dest_ip", ""))))
+                entry["host"] = str(payload.get("host", payload.get("source", "")))
+                entry["protocol"] = str(payload.get("protocol", "TCP") or "TCP").upper()
+
+                attempts_raw = payload.get("attempt_count", payload.get("attempts", 0))
+                try:
+                    entry["login_attempts"] = int(attempts_raw or 0)
+                except (ValueError, TypeError):
+                    entry["login_attempts"] = 0
+
+                pps_raw = payload.get("packets_per_second", payload.get("pps", 0))
+                try:
+                    entry["packets_per_second"] = int(pps_raw or 0)
+                except (ValueError, TypeError):
+                    entry["packets_per_second"] = 0
+
+                bytes_sent = payload.get("bytes_sent", 0)
+                size_mb_raw = payload.get("size_mb", payload.get("size", 0))
+                try:
+                    size_mb = int(size_mb_raw or 0)
+                except (ValueError, TypeError):
+                    size_mb = 0
+                if size_mb <= 0:
+                    try:
+                        size_mb = int((int(bytes_sent or 0)) / (1024 * 1024))
+                    except (ValueError, TypeError):
+                        size_mb = 0
+                entry["data_size_mb"] = size_mb
+
+                if payload.get("filename"):
+                    entry["action"] = f"execute:{payload.get('filename')}"
+                elif payload.get("file"):
+                    entry["action"] = f"execute:{payload.get('file')}"
+                else:
+                    entry["action"] = action or "log_entry"
+
+                if action in {"login_attempt", "login", "user_login", "auth_failed"}:
+                    entry["event_type"] = "LoginAttempt"
+                elif action in {"flood", "ddos", "dos"} or entry["packets_per_second"] >= 10000:
+                    entry["event_type"] = "NetworkFlood"
+                elif action in {"file_transfer", "data_transfer", "upload", "download", "transfer"} or entry["data_size_mb"] > 0:
+                    entry["event_type"] = "DataTransfer"
+                elif action in {"file_execution", "execute"}:
+                    entry["event_type"] = "FileExecution"
+
+                entry["login_failed"] = status in {"failed", "blocked", "denied", "error"}
+
+                if entry["login_attempts"] >= 5:
+                    entry["action"] = "brute_force"
+                if "payload" in line.lower() or ".exe" in line.lower():
+                    entry["action"] = "malware_execution"
+                if entry["data_size_mb"] > 500:
+                    entry["action"] = "data_exfiltration"
+                if entry["packets_per_second"] >= 10000:
+                    entry["action"] = "ddos_flood"
+
+                for ip_field in ["src_ip", "dst_ip"]:
+                    ip = entry.get(ip_field, "")
+                    if ip and not ip.startswith(("192.168.", "10.", "172.16.", "127.", "0.0.0.0")):
+                        entry["external_ip"] = True
+
+                return entry
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
         
         # Extract timestamp (YYYY-MM-DD HH:MM:SS)
         ts_match = re.match(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
@@ -398,14 +611,22 @@ class AppController:
         if event_match:
             entry["event_type"] = event_match.group(1)
         
+        # Extract explicit login status from text format ("UserLogin failed").
+        if re.search(r'\bUserLogin\s+failed\b', line, re.IGNORECASE):
+            entry["login_failed"] = True
+
         # Extract key=value pairs
         for match in re.finditer(r'(\w+)=([^\s]+)', line):
             key, value = match.groups()
             if key == 'ip':
                 entry["src_ip"] = value
+            elif key == 'src_ip':
+                entry["src_ip"] = value
             elif key == 'source':
                 entry["host"] = value
             elif key == 'destination':
+                entry["dst_ip"] = value
+            elif key == 'dst_ip':
                 entry["dst_ip"] = value
             elif key == 'host':
                 entry["host"] = value

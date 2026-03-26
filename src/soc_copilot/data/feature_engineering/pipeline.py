@@ -233,12 +233,21 @@ class FeatureEngineeringPipeline:
         # Drop non-numeric columns if configured
         if self.config.drop_non_numeric:
             for col in result.columns:
-                if not np.issubdtype(result[col].dtype, np.number):
+                if not pd.api.types.is_numeric_dtype(result[col]):
                     if col in self.feature_names:
                         # Convert to numeric if possible
                         result[col] = pd.to_numeric(result[col], errors="coerce")
                         result[col] = result[col].fillna(self.config.fill_na_value)
-        
+
+        # Cast all feature columns to float64 to avoid int64 dtype conflicts
+        # (pandas .loc assignment can produce mixed-type columns)
+        for col in self.feature_names:
+            if col in result.columns:
+                try:
+                    result[col] = result[col].astype("float64")
+                except (ValueError, TypeError):
+                    result[col] = pd.to_numeric(result[col], errors="coerce").fillna(self.config.fill_na_value)
+
         return result
     
     def get_feature_matrix(self, df: pd.DataFrame) -> np.ndarray:

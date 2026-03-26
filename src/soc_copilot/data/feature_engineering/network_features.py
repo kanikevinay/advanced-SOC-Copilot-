@@ -258,9 +258,10 @@ class NetworkFeatureExtractor(BaseFeatureExtractor):
         result = df.copy()
         prefix = self.config.feature_prefix
         
-        # Initialize features with defaults
+        # Initialize features with defaults as float64 to avoid dtype conflicts
+        # when float values (like fanout ratios) are assigned to int-initialized columns
         for feat_def in self.feature_definitions:
-            result[feat_def.name] = feat_def.default_value
+            result[feat_def.name] = float(feat_def.default_value)
         
         # Per-record port features
         dst_port_field = self.config.dst_port_field
